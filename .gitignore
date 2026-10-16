@@ -1,0 +1,14 @@
+# The original setup package; not needed in the online repo.
+*.zip
+
+# Planning notes stay on this computer only (the repo is public).
+CLAUDE.md
+SPEC.md
+BUILD_PLAN.md
+START_HERE.md
+docs/
+.claude/
+
+# Never commit secrets.
+.env
+*.secret
