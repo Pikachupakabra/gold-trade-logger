@@ -75,8 +75,50 @@
       </form>
 
       <h2>Open trades</h2>
-      <button type="button" id="refresh-button" class="secondary">Refresh list</button>
+      <button type="button" id="refresh-button" class="secondary">Refresh lists</button>
+
+      <!-- Shown when you tap "Close trade" on one of the open trades -->
+      <section id="close-section" class="close-box" hidden>
+        <h3>Close a trade</h3>
+        <p id="close-summary"></p>
+        <form id="close-form">
+          <label>Closed at
+            <input type="datetime-local" id="closed-at" required>
+          </label>
+
+          <!-- No inputmode here on purpose: the phone's decimal keypad has no minus key, and losses need one. -->
+          <label>P&amp;L ($), exactly as MT5 shows it. Use a minus sign for a loss, e.g. -25.50
+            <input type="number" id="pnl-usd" step="0.01" required>
+          </label>
+
+          <label>USD/ZAR rate
+            <input type="number" id="usdzar-rate" inputmode="decimal" min="0.0001" step="0.0001" required>
+          </label>
+
+          <label>Mistake (optional)
+            <select id="mistake-tag">
+              <option value="">None</option>
+              <option value="moved stop">Moved stop</option>
+              <option value="closed early">Closed early</option>
+              <option value="chased entry">Chased entry</option>
+              <option value="traded news">Traded news</option>
+              <option value="no setup">No setup</option>
+            </select>
+          </label>
+
+          <label>Lesson (optional, one line)
+            <input type="text" id="lesson" maxlength="300">
+          </label>
+
+          <button type="submit" id="close-button">Close trade</button>
+          <button type="button" id="cancel-close-button" class="secondary">Cancel</button>
+        </form>
+      </section>
+
       <ul id="open-trades-list" class="trades"></ul>
+
+      <h2>History</h2>
+      <ul id="history-list" class="trades"></ul>
     </section>
   </main>
 </body>

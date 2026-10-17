@@ -21,7 +21,8 @@ label {
   margin-bottom: 12px;
 }
 
-input {
+input,
+select {
   display: block;
   width: 100%;
   box-sizing: border-box;
@@ -121,4 +122,29 @@ ul.trades li {
 
 .rules.broken {
   color: #c62828;
+}
+
+.win {
+  color: #2e7d32;
+}
+
+.loss {
+  color: #c62828;
+}
+
+button.small {
+  padding: 6px 12px;
+  font-size: 0.9rem;
+  margin: 8px 0 0;
+}
+
+/* ---- Close-a-trade form ---- */
+.close-box {
+  border: 2px solid currentColor;
+  padding: 4px 12px 8px;
+  margin: 12px 0;
+}
+
+.close-box h3 {
+  margin: 8px 0 4px;
 }
