@@ -37,15 +37,46 @@
       <p>Signed in as <strong id="user-email"></strong></p>
       <button type="button" id="sign-out-button" class="secondary">Sign out</button>
 
-      <h2>Test notes</h2>
-      <form id="note-form">
-        <label>New note
-          <input type="text" id="note-text" maxlength="500" required>
+      <h2>Open a trade</h2>
+      <form id="open-form">
+        <fieldset>
+          <legend>Account</legend>
+          <label class="choice"><input type="radio" name="account" value="daily" required> Daily Demo</label>
+          <label class="choice"><input type="radio" name="account" value="backtest"> Backtest</label>
+        </fieldset>
+
+        <label>Opened at
+          <input type="datetime-local" id="opened-at" required>
         </label>
-        <button type="submit">Save note</button>
+
+        <fieldset>
+          <legend>Direction</legend>
+          <label class="choice"><input type="radio" name="direction" value="buy" required> Buy</label>
+          <label class="choice"><input type="radio" name="direction" value="sell"> Sell</label>
+        </fieldset>
+
+        <label>Risk ($)
+          <input type="number" id="risk-usd" inputmode="decimal" min="0.01" step="0.01" required>
+        </label>
+
+        <label>ADX (optional)
+          <input type="number" id="adx" inputmode="decimal" min="0" max="100" step="0.1">
+        </label>
+
+        <fieldset>
+          <legend>Entry checklist</legend>
+          <label class="check"><input type="checkbox" id="check-h1-bias"> The 1H Supertrend matches the trade direction.</label>
+          <label class="check"><input type="checkbox" id="check-m15-flip"> The 15m Supertrend has flipped to match.</label>
+          <label class="check"><input type="checkbox" id="check-adx"> ADX is above the threshold.</label>
+          <label class="check"><input type="checkbox" id="check-stop"> The stop is placed at the planned distance.</label>
+        </fieldset>
+
+        <button type="submit" id="open-button">Open trade</button>
       </form>
+
+      <h2>Open trades</h2>
       <button type="button" id="refresh-button" class="secondary">Refresh list</button>
-      <ul id="notes-list"></ul>
+      <ul id="open-trades-list" class="trades"></ul>
     </section>
   </main>
 </body>

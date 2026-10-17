@@ -1,4 +1,4 @@
-/* Bare styling for the Task 1 sync test. Proper design comes in Task 8. */
+/* Bare working styles. Proper design comes in Task 8. */
 :root {
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
@@ -36,6 +36,10 @@ button {
   margin: 0 8px 8px 0;
 }
 
+button:disabled {
+  opacity: 0.5;
+}
+
 button.secondary {
   opacity: 0.8;
 }
@@ -60,4 +64,61 @@ li {
 li small,
 li.empty {
   opacity: 0.7;
+}
+
+/* ---- Open-a-trade form ---- */
+fieldset {
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  margin: 0 0 12px;
+  padding: 8px 12px;
+}
+
+/* Radio buttons and tick-boxes sit beside their text, with a big tap area. */
+label.choice,
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  margin: 0;
+}
+
+label.choice {
+  display: inline-flex;
+  margin-right: 24px;
+}
+
+input[type="radio"],
+input[type="checkbox"] {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+/* ---- Trade lists ---- */
+ul.trades {
+  list-style: none;
+  padding: 0;
+}
+
+ul.trades li {
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.rules {
+  font-size: 0.8rem;
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+.rules.ok {
+  color: #2e7d32;
+}
+
+.rules.broken {
+  color: #c62828;
 }
