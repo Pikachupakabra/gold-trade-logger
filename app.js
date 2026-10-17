@@ -32,7 +32,8 @@ if (SUPABASE_URL.startsWith('PASTE_')) {
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ---- Signed in or out: show the right section ----
-let currentUserId = null;
+// Starts as "unknown" (undefined), so the first report always draws the page, signed in or out.
+let currentUserId;
 
 function render(session) {
   const userId = session ? session.user.id : null;
