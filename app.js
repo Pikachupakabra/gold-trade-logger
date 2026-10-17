@@ -1,5 +1,6 @@
 // Gold Trade Logger.
-// Signs in with email and password, opens and closes trades, and lists open and closed ones.
+// Signs in with email and password, opens and closes trades (with chart screenshots),
+// lists open and closed ones, and shows one trade's details with both screenshots.
 // All data lives in Supabase, so the phone and laptop see the same trades.
 
 // ---- Supabase connection ----
@@ -49,6 +50,7 @@ function render(session) {
   openTradesList.innerHTML = '';
   historyList.innerHTML = '';
   hideCloseForm();
+  hideDetail();
   if (userId) {
     el('user-email').textContent = session.user.email;
     openForm.reset();
@@ -158,6 +160,59 @@ function loadLists() {
   loadHistory();
 }
 
+// ---- Screenshots ----
+// Images go to a private Supabase Storage bucket, in a folder named after your user id.
+// The trade row only keeps the file's path (e.g. "abc-123/f00d.jpg").
+const SCREENSHOT_BUCKET = 'screenshots';
+// Phone photos can be 4000+ pixels wide and several MB. 1920 pixels on the longest
+// side keeps chart text readable at a fraction of the size.
+const MAX_IMAGE_SIDE = 1920;
+const JPEG_QUALITY = 0.85;
+
+// Shrinks a chosen image in the browser and returns it as a JPEG.
+async function shrinkImage(file) {
+  const image = new Image();
+  const fileUrl = URL.createObjectURL(file);
+  try {
+    image.src = fileUrl;
+    await image.decode();
+  } catch {
+    throw new Error('That file could not be read as an image. Please use a JPG or PNG.');
+  } finally {
+    URL.revokeObjectURL(fileUrl);
+  }
+
+  const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(image.naturalWidth * scale);
+  canvas.height = Math.round(image.naturalHeight * scale);
+  const context = canvas.getContext('2d');
+  // JPEGs can't be see-through, so fill with white first (otherwise clear areas turn black).
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not shrink the image.'))),
+      'image/jpeg', JPEG_QUALITY);
+  });
+}
+
+// Shrinks and uploads the image chosen in a file box, and returns its storage path.
+// Returns null if no image was chosen.
+async function uploadScreenshot(fileInput) {
+  const file = fileInput.files[0];
+  if (!file) return null;
+  showMessage('Shrinking and uploading the screenshot…');
+  const jpeg = await shrinkImage(file);
+  const path = `${currentUserId}/${crypto.randomUUID()}.jpg`;
+  const { error } = await db.storage
+    .from(SCREENSHOT_BUCKET)
+    .upload(path, jpeg, { contentType: 'image/jpeg', upsert: false });
+  if (error) throw new Error('Could not upload the screenshot: ' + error.message);
+  return path;
+}
+
 // ---- Open a trade ----
 
 // The account defaults to the one on your most recently saved trade, from either device.
@@ -198,6 +253,13 @@ openForm.addEventListener('submit', async (event) => {
   // Turn the button off while saving so a double tap can't log the trade twice.
   const button = el('open-button');
   button.disabled = true;
+  try {
+    // The screenshot goes up first, so the trade can store where it is.
+    trade.open_screenshot_path = await uploadScreenshot(el('open-screenshot'));
+  } catch (uploadError) {
+    button.disabled = false;
+    return showMessage(uploadError.message + ' The trade was not saved yet.', true);
+  }
   showMessage('Saving…');
   // user_id is filled in by the database from whoever is signed in.
   const { error } = await db.from('trades').insert(trade);
@@ -223,6 +285,23 @@ function rulesBadge(trade) {
 
 function directionName(trade) {
   return trade.direction === 'buy' ? 'Buy' : 'Sell';
+}
+
+// The Rand value and × risk of a closed trade.
+// Worked out here, never typed in (see "Calculated, not typed" in the spec).
+function closedResult(trade) {
+  const pnlUsd = Number(trade.pnl_usd);
+  const rate = Number(trade.usdzar_rate);
+  return { pnlUsd, rate, pnlZar: pnlUsd * rate, timesRisk: pnlUsd / Number(trade.risk_usd) };
+}
+
+function detailsButton(trade) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'small secondary';
+  button.textContent = 'Details';
+  button.addEventListener('click', () => showDetail(trade.id));
+  return button;
 }
 
 // ---- Open trades list ----
@@ -258,7 +337,7 @@ async function loadOpenTrades() {
     closeButton.addEventListener('click', () => showCloseForm(trade));
 
     item.append(headline, ' ', rulesBadge(trade), document.createElement('br'), details,
-      document.createElement('br'), closeButton);
+      document.createElement('br'), closeButton, detailsButton(trade));
     openTradesList.appendChild(item);
   }
 }
@@ -323,6 +402,12 @@ closeForm.addEventListener('submit', async (event) => {
   // Turn the button off while saving so a double tap can't send it twice.
   const button = el('close-button');
   button.disabled = true;
+  try {
+    closing.close_screenshot_path = await uploadScreenshot(el('close-screenshot'));
+  } catch (uploadError) {
+    button.disabled = false;
+    return showMessage(uploadError.message + ' The trade is still open.', true);
+  }
   showMessage('Saving…');
   // Only close it if it's still open, in case it was already closed on the other device.
   const { data, error } = await db
@@ -359,11 +444,7 @@ async function loadHistory() {
     return;
   }
   for (const trade of data) {
-    const pnlUsd = Number(trade.pnl_usd);
-    const rate = Number(trade.usdzar_rate);
-    // Worked out here, never typed in (see "Calculated, not typed" in the spec).
-    const pnlZar = pnlUsd * rate;
-    const timesRisk = pnlUsd / Number(trade.risk_usd);
+    const { pnlUsd, rate, pnlZar, timesRisk } = closedResult(trade);
 
     const item = document.createElement('li');
 
@@ -386,6 +467,126 @@ async function loadHistory() {
         .filter(Boolean).join(' · ');
       item.append(document.createElement('br'), notes);
     }
+    item.append(document.createElement('br'), detailsButton(trade));
     historyList.appendChild(item);
   }
 }
+
+// ---- Trade detail (with both screenshots) ----
+const detailDialog = el('detail-dialog');
+// The trade the detail view is showing, so a slow answer for an earlier tap is ignored.
+let detailTradeId = null;
+
+const CHECKLIST = [
+  ['check_h1_bias', '1H Supertrend matches direction'],
+  ['check_m15_flip', '15m Supertrend flipped to match'],
+  ['check_adx', 'ADX above threshold'],
+  ['check_stop', 'Stop at planned distance'],
+];
+
+async function showDetail(tradeId) {
+  detailTradeId = tradeId;
+  el('detail-title').textContent = 'Loading…';
+  el('detail-status').textContent = '';
+  el('detail-fields').innerHTML = '';
+  el('open-shot').innerHTML = '';
+  el('close-shot').innerHTML = '';
+  if (!detailDialog.open) detailDialog.showModal();
+
+  // Fetch the trade fresh, in case it was closed on your other device since the list loaded.
+  const { data: trade, error } = await db.from('trades').select('*').eq('id', tradeId).single();
+  if (detailTradeId !== tradeId) return;
+  if (error) {
+    el('detail-title').textContent = 'Could not load this trade';
+    el('detail-status').textContent = error.message;
+    return;
+  }
+
+  // The bucket is private, so each image needs a signed link. These last one hour.
+  const paths = [trade.open_screenshot_path, trade.close_screenshot_path].filter(Boolean);
+  const links = {};
+  if (paths.length > 0) {
+    const { data: signed, error: linkError } = await db.storage
+      .from(SCREENSHOT_BUCKET)
+      .createSignedUrls(paths, 60 * 60);
+    if (detailTradeId !== tradeId) return;
+    if (!linkError) {
+      for (const item of signed) if (!item.error) links[item.path] = item.signedUrl;
+    }
+  }
+  renderDetail(trade, links);
+}
+
+// Fills in the detail view. "links" maps a screenshot's storage path to a link that shows it.
+function renderDetail(trade, links) {
+  const closed = trade.closed_at !== null;
+  const rows = [
+    ['Account', ACCOUNT_NAMES[trade.account]],
+    ['Opened', formatWhen(trade.opened_at)],
+    ['Risk', usd.format(trade.risk_usd)],
+    ['ADX', trade.adx === null ? '—' : String(trade.adx)],
+    ...CHECKLIST.map(([field, name]) => [name, trade[field] ? '✓ Yes' : '✗ No']),
+  ];
+
+  if (closed) {
+    const { pnlUsd, rate, pnlZar, timesRisk } = closedResult(trade);
+    el('detail-title').textContent = `${directionName(trade)} · ${signedUsd.format(pnlUsd)}`;
+    el('detail-title').className = pnlUsd > 0 ? 'win' : pnlUsd < 0 ? 'loss' : '';
+    rows.push(
+      ['Closed', formatWhen(trade.closed_at)],
+      ['P&L', `${signedUsd.format(pnlUsd)} · ${signedZar(pnlZar)}`],
+      ['Result', formatTimesRisk(timesRisk)],
+      ['USD/ZAR rate', String(rate)],
+      ['Mistake', trade.mistake_tag || 'None'],
+      ['Lesson', trade.lesson || '—'],
+    );
+  } else {
+    el('detail-title').textContent = `${directionName(trade)} · still open`;
+    el('detail-title').className = '';
+  }
+
+  el('detail-status').replaceChildren(rulesBadge(trade));
+
+  const list = el('detail-fields');
+  list.innerHTML = '';
+  for (const [name, value] of rows) {
+    const term = document.createElement('dt');
+    term.textContent = name;
+    const description = document.createElement('dd');
+    description.textContent = value;
+    list.append(term, description);
+  }
+
+  showShot(el('open-shot'), trade.open_screenshot_path, links, 'No screenshot at open.');
+  showShot(el('close-shot'), trade.close_screenshot_path, links,
+    closed ? 'No screenshot at close.' : 'Not closed yet.');
+}
+
+function showShot(box, path, links, emptyText) {
+  box.innerHTML = '';
+  if (!path || !links[path]) {
+    const note = document.createElement('p');
+    note.className = 'empty';
+    note.textContent = path ? 'Could not load this screenshot.' : emptyText;
+    box.appendChild(note);
+    return;
+  }
+  // Tap the image to open it full size, e.g. to zoom in on a phone.
+  const link = document.createElement('a');
+  link.href = links[path];
+  link.target = '_blank';
+  link.rel = 'noopener';
+  const image = document.createElement('img');
+  image.src = links[path];
+  image.alt = 'Chart screenshot';
+  link.appendChild(image);
+  box.appendChild(link);
+}
+
+function hideDetail() {
+  if (detailDialog.open) detailDialog.close();
+}
+
+el('detail-back-button').addEventListener('click', hideDetail);
+// Runs however the view is closed (Back button, or the Esc key on a laptop).
+detailDialog.addEventListener('close', () => { detailTradeId = null; });

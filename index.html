@@ -71,6 +71,10 @@
           <label class="check"><input type="checkbox" id="check-stop"> The stop is placed at the planned distance.</label>
         </fieldset>
 
+        <label>Chart screenshot (optional)
+          <input type="file" id="open-screenshot" accept="image/*">
+        </label>
+
         <button type="submit" id="open-button">Open trade</button>
       </form>
 
@@ -110,6 +114,10 @@
             <input type="text" id="lesson" maxlength="300">
           </label>
 
+          <label>Chart screenshot (optional)
+            <input type="file" id="close-screenshot" accept="image/*">
+          </label>
+
           <button type="submit" id="close-button">Close trade</button>
           <button type="button" id="cancel-close-button" class="secondary">Cancel</button>
         </form>
@@ -121,5 +129,25 @@
       <ul id="history-list" class="trades"></ul>
     </section>
   </main>
+
+  <!-- Trade detail: shown over the page when you tap "Details" on a trade -->
+  <dialog id="detail-dialog" class="detail">
+    <div class="detail-inner">
+      <button type="button" id="detail-back-button" class="secondary">Back</button>
+      <h2 id="detail-title"></h2>
+      <p id="detail-status"></p>
+      <dl id="detail-fields" class="detail-fields"></dl>
+      <div class="screenshots">
+        <figure>
+          <figcaption>At open</figcaption>
+          <div id="open-shot" class="shot"></div>
+        </figure>
+        <figure>
+          <figcaption>At close</figcaption>
+          <div id="close-shot" class="shot"></div>
+        </figure>
+      </div>
+    </div>
+  </dialog>
 </body>
 </html>
