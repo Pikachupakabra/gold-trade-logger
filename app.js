@@ -1,7 +1,9 @@
 // Gold Trade Logger.
 // Signs in with email and password, opens and closes trades (with chart screenshots),
 // lists open and closed ones, and shows one trade's details with both screenshots.
-// All data lives in Supabase, so the phone and laptop see the same trades.
+// A switch picks which account to show, with a headline of totals for each one,
+// and a settings form holds starting balances, today's rate and the ADX threshold.
+// All data lives in Supabase, so the phone and laptop see the same trades and settings.
 
 // ---- Supabase connection ----
 // Both values come from Supabase: Project Settings > API Keys (and Data API for the URL).
@@ -20,6 +22,8 @@ const openTradesList = el('open-trades-list');
 const closeSection = el('close-section');
 const closeForm = el('close-form');
 const historyList = el('history-list');
+const headlineBox = el('headline');
+const settingsForm = el('settings-form');
 
 function showMessage(text, isError = false) {
   messageBox.textContent = text;
@@ -49,6 +53,10 @@ function render(session) {
   signedInSection.hidden = !userId;
   openTradesList.innerHTML = '';
   historyList.innerHTML = '';
+  headlineBox.innerHTML = '';
+  openTrades = [];
+  closedTrades = [];
+  settings = emptySettings();
   hideCloseForm();
   hideDetail();
   if (userId) {
@@ -56,6 +64,9 @@ function render(session) {
     openForm.reset();
     setToNow(openedAtInput);
     selectLastUsedAccount();
+    selectRememberedView();
+    resetSettingsForm();
+    loadSettings();
     loadLists();
   }
 }
@@ -114,6 +125,16 @@ function signedZar(amount) {
   return `${signOf(amount)}R${twoDecimals.format(Math.abs(amount))}`;
 }
 
+// % return, e.g. +1.25% or -0.40%.
+const signedPercent = new Intl.NumberFormat('en-US', {
+  style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero',
+});
+
+// Rounds to whole cents, with halves going away from zero (the way money is usually rounded).
+function toCents(amount) {
+  return Math.sign(amount) * Math.round(Math.abs(amount) * 100);
+}
+
 // The result in units of risk, e.g. +1.50× risk.
 function formatTimesRisk(value) {
   return `${signOf(value)}${twoDecimals.format(Math.abs(value))}× risk`;
@@ -152,6 +173,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden || signedInSection.hidden) return;
   if (!openedAtInput.dataset.edited) setToNow(openedAtInput);
   if (!closeSection.hidden && !closedAtInput.dataset.edited) setToNow(closedAtInput);
+  loadSettings();
   loadLists();
 });
 
@@ -304,7 +326,18 @@ function detailsButton(trade) {
   return button;
 }
 
+// The text for an empty list, e.g. "No open trades on Backtest."
+function emptyListItem(text) {
+  const view = selectedView();
+  const item = document.createElement('li');
+  item.className = 'empty';
+  item.textContent = view === 'both' ? `${text}.` : `${text} on ${ACCOUNT_NAMES[view]}.`;
+  return item;
+}
+
 // ---- Open trades list ----
+// Every open trade, from both accounts. The switch decides which ones are drawn.
+let openTrades = [];
 
 async function loadOpenTrades() {
   const { data, error } = await db
@@ -313,13 +346,18 @@ async function loadOpenTrades() {
     .is('closed_at', null)
     .order('opened_at', { ascending: false });
   if (error) return showMessage('Could not load trades: ' + error.message, true);
+  openTrades = data;
+  renderOpenTrades();
+}
 
+function renderOpenTrades() {
+  const shown = openTrades.filter(isInView);
   openTradesList.innerHTML = '';
-  if (data.length === 0) {
-    openTradesList.innerHTML = '<li class="empty">No open trades.</li>';
+  if (shown.length === 0) {
+    openTradesList.appendChild(emptyListItem('No open trades'));
     return;
   }
-  for (const trade of data) {
+  for (const trade of shown) {
     const item = document.createElement('li');
 
     const headline = document.createElement('strong');
@@ -344,6 +382,7 @@ async function loadOpenTrades() {
 
 el('refresh-button').addEventListener('click', () => {
   showMessage('');
+  loadSettings();
   loadLists();
 });
 
@@ -429,6 +468,9 @@ closeForm.addEventListener('submit', async (event) => {
 });
 
 // ---- History (closed trades) ----
+// Every closed trade, from both accounts. Used by History and the headline.
+let closedTrades = [];
+
 async function loadHistory() {
   const { data, error } = await db
     .from('trades')
@@ -437,13 +479,19 @@ async function loadHistory() {
     .not('closed_at', 'is', null)
     .order('closed_at', { ascending: false });
   if (error) return showMessage('Could not load history: ' + error.message, true);
+  closedTrades = data;
+  renderHistory();
+  renderHeadline();
+}
 
+function renderHistory() {
+  const shown = closedTrades.filter(isInView);
   historyList.innerHTML = '';
-  if (data.length === 0) {
-    historyList.innerHTML = '<li class="empty">No closed trades yet.</li>';
+  if (shown.length === 0) {
+    historyList.appendChild(emptyListItem('No closed trades yet'));
     return;
   }
-  for (const trade of data) {
+  for (const trade of shown) {
     const { pnlUsd, rate, pnlZar, timesRisk } = closedResult(trade);
 
     const item = document.createElement('li');
@@ -471,6 +519,200 @@ async function loadHistory() {
     historyList.appendChild(item);
   }
 }
+
+// ---- Account switch: Daily Demo, Backtest or Both ----
+// Remembered on this device only, so the phone and laptop can each show a different account.
+const VIEW_STORAGE_KEY = 'gold-trade-logger:view';
+const viewInputs = document.querySelectorAll('input[name="view"]');
+
+function selectedView() {
+  const checked = document.querySelector('input[name="view"]:checked');
+  return checked ? checked.value : 'both';
+}
+
+function isInView(trade) {
+  const view = selectedView();
+  return view === 'both' || trade.account === view;
+}
+
+function selectRememberedView() {
+  let view = 'both';
+  try {
+    view = localStorage.getItem(VIEW_STORAGE_KEY) || 'both';
+  } catch {
+    // Some private browsing modes block storage. Just show both.
+  }
+  for (const input of viewInputs) input.checked = input.value === view;
+  if (!document.querySelector('input[name="view"]:checked')) viewInputs[viewInputs.length - 1].checked = true;
+}
+
+for (const input of viewInputs) {
+  input.addEventListener('change', () => {
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, selectedView());
+    } catch {
+      // Not remembered, but the switch still works.
+    }
+    renderOpenTrades();
+    renderHistory();
+    renderHeadline();
+  });
+}
+
+// ---- Headline: totals for each account shown ----
+
+// One account's totals from its closed trades. Only maths here, no page changes.
+// Dollars and Rand are added up in whole cents, and each trade's Rand value is rounded
+// to the cent first, so the totals match adding up the values shown in History.
+function headlineTotals(trades, startBalance, todayRate) {
+  let usdCents = 0;
+  let zarCents = 0;
+  for (const trade of trades) {
+    const { pnlUsd, pnlZar } = closedResult(trade);
+    usdCents += toCents(pnlUsd);
+    zarCents += toCents(pnlZar);
+  }
+  const totalUsd = usdCents / 100;
+  return {
+    count: trades.length,
+    totalUsd,
+    zarAtCloseRates: zarCents / 100,
+    // Empty (null) until the setting it needs has been filled in.
+    zarAtTodayRate: todayRate ? totalUsd * todayRate : null,
+    returnFraction: startBalance ? totalUsd / startBalance : null,
+  };
+}
+
+function renderHeadline() {
+  const view = selectedView();
+  const accounts = view === 'both' ? ['daily', 'backtest'] : [view];
+  const todayRate = settings.usdzar_today === null ? null : Number(settings.usdzar_today);
+
+  headlineBox.innerHTML = '';
+  for (const account of accounts) {
+    const balance = settings[`start_balance_${account}`];
+    const startBalance = balance === null ? null : Number(balance);
+    const totals = headlineTotals(closedTrades.filter((trade) => trade.account === account),
+      startBalance, todayRate);
+
+    const card = document.createElement('div');
+    card.className = 'headline-card';
+    const line = (text, className = '') => {
+      const paragraph = document.createElement('p');
+      paragraph.className = className;
+      paragraph.textContent = text;
+      card.appendChild(paragraph);
+    };
+
+    const title = document.createElement('h3');
+    title.textContent = ACCOUNT_NAMES[account];
+    card.appendChild(title);
+
+    const resultClass = totals.totalUsd > 0 ? 'win' : totals.totalUsd < 0 ? 'loss' : '';
+    line(signedUsd.format(totals.totalUsd), `headline-usd ${resultClass}`);
+    line(`${signedZar(totals.zarAtCloseRates)} at each trade's close-date rate`);
+    line(totals.zarAtTodayRate === null
+      ? "Rand at today's rate: set today's rate in Settings."
+      : `${signedZar(totals.zarAtTodayRate)} at today's rate (USD/ZAR ${todayRate})`);
+    line(totals.returnFraction === null
+      ? '% return: set a starting balance in Settings.'
+      : `${signedPercent.format(totals.returnFraction)} return on ${usd.format(startBalance)}`);
+    const count = totals.count === 1 ? '1 closed trade' : `${totals.count} closed trades`;
+    line(`From ${count}. Open trades aren't counted.`, 'note');
+
+    headlineBox.appendChild(card);
+  }
+}
+
+// ---- Settings ----
+// Kept in the settings table (one row for you), so both devices share them.
+const DEFAULT_ADX_THRESHOLD = 20;
+let settings = emptySettings();
+
+// Before anything is saved: no balances or rate yet, and the spec's default ADX threshold.
+function emptySettings() {
+  return {
+    start_balance_daily: null,
+    start_balance_backtest: null,
+    usdzar_today: null,
+    adx_threshold: DEFAULT_ADX_THRESHOLD,
+  };
+}
+
+async function loadSettings() {
+  const { data, error } = await db
+    .from('settings')
+    .select('start_balance_daily, start_balance_backtest, usdzar_today, adx_threshold')
+    .maybeSingle();
+  if (error) return showMessage('Could not load settings: ' + error.message, true);
+  settings = data || emptySettings();
+  fillSettingsForm();
+  showAdxThreshold();
+  renderHeadline();
+}
+
+// Shows the threshold in the entry checklist, e.g. "ADX is above the threshold (20)."
+function showAdxThreshold() {
+  el('adx-threshold-text').textContent = String(Number(settings.adx_threshold));
+}
+
+const settingsFields = {
+  start_balance_daily: el('start-balance-daily'),
+  start_balance_backtest: el('start-balance-backtest'),
+  usdzar_today: el('usdzar-today'),
+  adx_threshold: el('adx-threshold'),
+};
+
+function resetSettingsForm() {
+  settingsForm.reset();
+  delete settingsForm.dataset.edited;
+  showSettingsStatus('');
+  el('settings-box').open = false;
+  fillSettingsForm();
+}
+
+// Puts the saved settings in the form, unless you're halfway through changing them.
+function fillSettingsForm() {
+  if (settingsForm.dataset.edited) return;
+  for (const [field, input] of Object.entries(settingsFields)) {
+    input.value = settings[field] === null ? '' : Number(settings[field]);
+  }
+}
+
+settingsForm.addEventListener('input', () => { settingsForm.dataset.edited = 'yes'; });
+
+// The form is at the bottom of the page, so its messages show right under the button.
+function showSettingsStatus(text, isError = false) {
+  const status = el('settings-status');
+  status.textContent = text;
+  status.classList.toggle('error', isError);
+  status.hidden = !text;
+}
+
+settingsForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const numberOrNull = (input) => (input.value === '' ? null : Number(input.value));
+  const changes = {
+    start_balance_daily: numberOrNull(settingsFields.start_balance_daily),
+    start_balance_backtest: numberOrNull(settingsFields.start_balance_backtest),
+    usdzar_today: numberOrNull(settingsFields.usdzar_today),
+    adx_threshold: Number(settingsFields.adx_threshold.value),
+  };
+
+  const button = el('settings-button');
+  button.disabled = true;
+  showSettingsStatus('Saving…');
+  // "upsert" creates your settings row the first time, and updates it after that.
+  const { error } = await db.from('settings').upsert({ user_id: currentUserId, ...changes });
+  button.disabled = false;
+  if (error) return showSettingsStatus('Could not save: ' + error.message, true);
+
+  settings = changes;
+  delete settingsForm.dataset.edited;
+  showAdxThreshold();
+  renderHeadline();
+  showSettingsStatus('Settings saved.');
+});
 
 // ---- Trade detail (with both screenshots) ----
 const detailDialog = el('detail-dialog');

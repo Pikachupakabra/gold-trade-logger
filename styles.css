@@ -222,3 +222,48 @@ dialog.detail {
   opacity: 0.7;
   margin: 0;
 }
+
+/* ---- Headline ---- */
+.headline {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0 8px;
+}
+
+.headline-card {
+  border: 2px solid currentColor;
+  padding: 8px 12px;
+}
+
+.headline-card h3 {
+  margin: 0 0 4px;
+}
+
+.headline-card p {
+  margin: 2px 0;
+}
+
+.headline-usd {
+  font-size: 1.8rem;
+  font-weight: bold;
+}
+
+.headline-card .note {
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+/* ---- Settings ---- */
+summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+
+label small {
+  display: block;
+  opacity: 0.7;
+}
+
+.status.error {
+  color: #c62828;
+}

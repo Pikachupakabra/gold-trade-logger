@@ -37,6 +37,17 @@
       <p>Signed in as <strong id="user-email"></strong></p>
       <button type="button" id="sign-out-button" class="secondary">Sign out</button>
 
+      <!-- Which account to show. Filters the headline and both lists. -->
+      <fieldset id="view-switch">
+        <legend>Show</legend>
+        <label class="choice"><input type="radio" name="view" value="daily"> Daily Demo</label>
+        <label class="choice"><input type="radio" name="view" value="backtest"> Backtest</label>
+        <label class="choice"><input type="radio" name="view" value="both" checked> Both</label>
+      </fieldset>
+
+      <!-- Headline: one card per account shown, filled in by app.js -->
+      <div id="headline" class="headline"></div>
+
       <h2>Open a trade</h2>
       <form id="open-form">
         <fieldset>
@@ -67,7 +78,7 @@
           <legend>Entry checklist</legend>
           <label class="check"><input type="checkbox" id="check-h1-bias"> The 1H Supertrend matches the trade direction.</label>
           <label class="check"><input type="checkbox" id="check-m15-flip"> The 15m Supertrend has flipped to match.</label>
-          <label class="check"><input type="checkbox" id="check-adx"> ADX is above the threshold.</label>
+          <label class="check"><input type="checkbox" id="check-adx"> <span>ADX is above the threshold (<span id="adx-threshold-text">20</span>).</span></label>
           <label class="check"><input type="checkbox" id="check-stop"> The stop is placed at the planned distance.</label>
         </fieldset>
 
@@ -127,6 +138,28 @@
 
       <h2>History</h2>
       <ul id="history-list" class="trades"></ul>
+
+      <h2>Settings</h2>
+      <details id="settings-box">
+        <summary>Starting balances, today's rate, ADX threshold</summary>
+        <form id="settings-form">
+          <label>Daily Demo starting balance ($)
+            <input type="number" id="start-balance-daily" inputmode="decimal" min="0.01" step="0.01">
+          </label>
+          <label>Backtest starting balance ($)
+            <input type="number" id="start-balance-backtest" inputmode="decimal" min="0.01" step="0.01">
+          </label>
+          <label>Today's USD/ZAR rate
+            <small>Only used for totals "at today's rate". Each closed trade keeps its own rate.</small>
+            <input type="number" id="usdzar-today" inputmode="decimal" min="0.0001" step="0.0001">
+          </label>
+          <label>ADX threshold
+            <input type="number" id="adx-threshold" inputmode="decimal" min="0" max="100" step="0.1" required>
+          </label>
+          <button type="submit" id="settings-button">Save settings</button>
+          <p id="settings-status" class="status" hidden></p>
+        </form>
+      </details>
     </section>
   </main>
 
