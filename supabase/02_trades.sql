@@ -65,6 +65,6 @@ create policy "trades: change own"
   with check ((select auth.uid()) = user_id);
 
 -- Table permissions: signed-in users may read, add and change; signed-out visitors get nothing.
--- There is deliberately no delete permission.
+-- There is deliberately no delete permission here. Task 9 adds it in 05_delete.sql.
 revoke all on public.trades from anon;
 grant select, insert, update on public.trades to authenticated;

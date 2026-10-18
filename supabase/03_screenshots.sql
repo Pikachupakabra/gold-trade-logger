@@ -31,4 +31,4 @@ create policy "screenshots: add own"
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
--- There is deliberately no change or delete policy. Task 9 adds "delete own".
+-- There is deliberately no change or delete policy. Task 9 adds "delete own" in 05_delete.sql.

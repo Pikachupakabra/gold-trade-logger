@@ -255,17 +255,102 @@
     <div class="detail-inner">
       <h2 id="detail-title"></h2>
       <p id="detail-status"></p>
-      <dl id="detail-fields" class="detail-fields"></dl>
-      <div class="screenshots">
-        <figure>
-          <figcaption>At open</figcaption>
-          <div id="open-shot" class="shot"></div>
-        </figure>
-        <figure>
-          <figcaption>At close</figcaption>
-          <div id="close-shot" class="shot"></div>
-        </figure>
+      <!-- Messages for this view. The page's own message box is hidden behind it. -->
+      <p id="detail-message" class="status" role="status" hidden></p>
+
+      <div id="detail-view">
+        <dl id="detail-fields" class="detail-fields"></dl>
+        <div id="detail-actions" class="actions detail-actions" hidden>
+          <button type="button" id="edit-button" class="secondary">Edit</button>
+          <button type="button" id="delete-button" class="danger">Delete</button>
+        </div>
+        <div class="screenshots">
+          <figure>
+            <figcaption>At open</figcaption>
+            <div id="open-shot" class="shot"></div>
+          </figure>
+          <figure>
+            <figcaption>At close</figcaption>
+            <div id="close-shot" class="shot"></div>
+          </figure>
+        </div>
       </div>
+
+      <!-- Shown in place of the details when you tap "Edit". The "At close" part only shows for a closed trade. -->
+      <form id="edit-form" class="edit-form" hidden>
+        <h3>At open</h3>
+        <fieldset class="segmented">
+          <legend>Account</legend>
+          <label class="choice"><input type="radio" name="edit-account" value="daily" required> Daily Demo</label>
+          <label class="choice"><input type="radio" name="edit-account" value="backtest"> Backtest</label>
+        </fieldset>
+
+        <label>Opened at
+          <input type="datetime-local" id="edit-opened-at" required>
+        </label>
+
+        <fieldset class="segmented direction">
+          <legend>Direction</legend>
+          <label class="choice buy"><input type="radio" name="edit-direction" value="buy" required> Buy</label>
+          <label class="choice sell"><input type="radio" name="edit-direction" value="sell"> Sell</label>
+        </fieldset>
+
+        <div class="pair">
+          <label>Risk ($)
+            <input type="number" id="edit-risk-usd" inputmode="decimal" min="0.01" step="0.01" required>
+          </label>
+          <label>ADX (optional)
+            <input type="number" id="edit-adx" inputmode="decimal" min="0" max="100" step="0.1">
+          </label>
+        </div>
+
+        <fieldset class="checklist">
+          <legend>Entry checklist</legend>
+          <label class="check"><input type="checkbox" id="edit-check-h1-bias"> The 1H Supertrend matches the trade direction.</label>
+          <label class="check"><input type="checkbox" id="edit-check-m15-flip"> The 15m Supertrend has flipped to match.</label>
+          <label class="check"><input type="checkbox" id="edit-check-adx"> ADX is above the threshold.</label>
+          <label class="check"><input type="checkbox" id="edit-check-stop"> The stop is placed at the planned distance.</label>
+        </fieldset>
+
+        <!-- Switched off (disabled) for an open trade, so its boxes aren't checked or saved. -->
+        <fieldset id="edit-close-fields">
+          <h3>At close</h3>
+          <label>Closed at
+            <input type="datetime-local" id="edit-closed-at" required>
+          </label>
+
+          <!-- No inputmode here on purpose: the phone's decimal keypad has no minus key, and losses need one. -->
+          <label>P&amp;L ($)
+            <small>Exactly as MT5 shows it. Use a minus sign for a loss, e.g. -25.50</small>
+            <input type="number" id="edit-pnl-usd" step="0.01" required>
+          </label>
+
+          <label>USD/ZAR rate
+            <small>The rate saved when the trade closed. Only change it to fix a typo.</small>
+            <input type="number" id="edit-usdzar-rate" inputmode="decimal" min="0.0001" step="0.0001" required>
+          </label>
+
+          <label>Mistake (optional)
+            <select id="edit-mistake-tag">
+              <option value="">None</option>
+              <option value="moved stop">Moved stop</option>
+              <option value="closed early">Closed early</option>
+              <option value="chased entry">Chased entry</option>
+              <option value="traded news">Traded news</option>
+              <option value="no setup">No setup</option>
+            </select>
+          </label>
+
+          <label>Lesson (optional, one line)
+            <input type="text" id="edit-lesson" maxlength="300">
+          </label>
+        </fieldset>
+
+        <div class="actions">
+          <button type="submit" id="save-edit-button">Save changes</button>
+          <button type="button" id="cancel-edit-button" class="secondary">Cancel</button>
+        </div>
+      </form>
     </div>
   </dialog>
 </body>

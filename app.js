@@ -1,6 +1,7 @@
 // Gold Trade Logger.
 // Signs in with email and password, opens and closes trades (with chart screenshots),
-// lists open and closed ones, and shows one trade's details with both screenshots.
+// lists open and closed ones, and shows one trade's details with both screenshots,
+// where a trade can also be edited (to fix a typo) or deleted.
 // A switch picks which account to show, with a headline of totals for each one,
 // a stats panel per account (including rules followed vs broken), a CSV download of closed trades,
 // and a settings form holds starting balances, today's rate and the ADX threshold.
@@ -424,12 +425,16 @@ el('refresh-button').addEventListener('click', () => {
 // The trade the close form is filled in for, or null when the form is hidden.
 let tradeBeingClosed = null;
 
+function showCloseSummary(trade) {
+  el('close-summary').textContent = `${directionName(trade)} · risk ${usd.format(trade.risk_usd)} · ` +
+    `${ACCOUNT_NAMES[trade.account]} · opened ${formatWhen(trade.opened_at)}`;
+}
+
 function showCloseForm(trade) {
   tradeBeingClosed = trade;
   closeForm.reset();
   setToNow(closedAtInput);
-  el('close-summary').textContent = `${directionName(trade)} · risk ${usd.format(trade.risk_usd)} · ` +
-    `${ACCOUNT_NAMES[trade.account]} · opened ${formatWhen(trade.opened_at)}`;
+  showCloseSummary(trade);
   closeSection.hidden = false;
   closeSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
   fillLastRate(trade.account);
@@ -1001,9 +1006,15 @@ settingsForm.addEventListener('submit', async (event) => {
 const detailDialog = el('detail-dialog');
 // The trade the detail view is showing, so a slow answer for an earlier tap is ignored.
 let detailTradeId = null;
+// The whole trade once it has loaded, for the Edit and Delete buttons.
+let detailTrade = null;
 
 async function showDetail(tradeId) {
   detailTradeId = tradeId;
+  detailTrade = null;
+  hideEditForm();
+  el('detail-actions').hidden = true;
+  showDetailMessage('');
   el('detail-title').textContent = 'Loading…';
   el('detail-status').textContent = '';
   el('detail-fields').innerHTML = '';
@@ -1078,6 +1089,17 @@ function renderDetail(trade, links) {
   showShot(el('open-shot'), trade.open_screenshot_path, links, 'No screenshot at open.');
   showShot(el('close-shot'), trade.close_screenshot_path, links,
     closed ? 'No screenshot at close.' : 'Not closed yet.');
+
+  detailTrade = trade;
+  el('detail-actions').hidden = false;
+}
+
+// Messages inside the detail view (the page's message box would be hidden behind it).
+function showDetailMessage(text, isError = false) {
+  const status = el('detail-message');
+  status.textContent = text;
+  status.classList.toggle('error', isError);
+  status.hidden = !text;
 }
 
 function showShot(box, path, links, emptyText) {
@@ -1107,7 +1129,175 @@ function hideDetail() {
 
 el('detail-back-button').addEventListener('click', hideDetail);
 // Runs however the view is closed (Back button, or the Esc key on a laptop).
-detailDialog.addEventListener('close', () => { detailTradeId = null; });
+detailDialog.addEventListener('close', () => {
+  detailTradeId = null;
+  detailTrade = null;
+});
+
+// ---- Edit a trade (from its detail view) ----
+// Every typed field can be fixed. × risk and Rand are worked out from the saved values
+// each time they're shown, so they update by themselves after an edit.
+// This form is the only place a closed trade's USD/ZAR rate can change.
+const editForm = el('edit-form');
+const editCloseFields = el('edit-close-fields');
+
+const EDIT_CHECKBOXES = {
+  check_h1_bias: el('edit-check-h1-bias'),
+  check_m15_flip: el('edit-check-m15-flip'),
+  check_adx: el('edit-check-adx'),
+  check_stop: el('edit-check-stop'),
+};
+
+function showEditForm() {
+  const trade = detailTrade;
+  const closed = trade.closed_at !== null;
+  editForm.reset();
+  editForm.elements['edit-account'].value = trade.account;
+  el('edit-opened-at').value = toLocalInputValue(new Date(trade.opened_at));
+  editForm.elements['edit-direction'].value = trade.direction;
+  el('edit-risk-usd').value = Number(trade.risk_usd);
+  el('edit-adx').value = trade.adx === null ? '' : Number(trade.adx);
+  for (const [field, box] of Object.entries(EDIT_CHECKBOXES)) box.checked = trade[field];
+
+  // An open trade has no close values yet. Switching the boxes off means they aren't
+  // required and aren't saved.
+  editCloseFields.hidden = !closed;
+  editCloseFields.disabled = !closed;
+  if (closed) {
+    el('edit-closed-at').value = toLocalInputValue(new Date(trade.closed_at));
+    el('edit-pnl-usd').value = Number(trade.pnl_usd);
+    el('edit-usdzar-rate').value = Number(trade.usdzar_rate);
+    el('edit-mistake-tag').value = trade.mistake_tag || '';
+    el('edit-lesson').value = trade.lesson || '';
+  }
+
+  showDetailMessage('');
+  el('detail-view').hidden = true;
+  editForm.hidden = false;
+  detailDialog.scrollTop = 0;
+}
+
+function hideEditForm() {
+  editForm.hidden = true;
+  el('detail-view').hidden = false;
+}
+
+el('edit-button').addEventListener('click', showEditForm);
+
+el('cancel-edit-button').addEventListener('click', () => {
+  hideEditForm();
+  showDetailMessage('');
+});
+
+editForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const trade = detailTrade;
+  const closed = trade.closed_at !== null;
+  const adxText = el('edit-adx').value;
+  const changes = {
+    account: editForm.elements['edit-account'].value,
+    opened_at: new Date(el('edit-opened-at').value).toISOString(),
+    direction: editForm.elements['edit-direction'].value,
+    risk_usd: Number(el('edit-risk-usd').value),
+    adx: adxText === '' ? null : Number(adxText),
+  };
+  for (const [field, box] of Object.entries(EDIT_CHECKBOXES)) changes[field] = box.checked;
+
+  if (closed) {
+    const closedAt = new Date(el('edit-closed-at').value);
+    if (closedAt < new Date(changes.opened_at)) {
+      return showDetailMessage('The close time is before the open time. Please check the dates.', true);
+    }
+    Object.assign(changes, {
+      closed_at: closedAt.toISOString(),
+      pnl_usd: Number(el('edit-pnl-usd').value),
+      usdzar_rate: Number(el('edit-usdzar-rate').value),
+      mistake_tag: el('edit-mistake-tag').value || null,
+      lesson: el('edit-lesson').value.trim() || null,
+    });
+  }
+
+  const button = el('save-edit-button');
+  button.disabled = true;
+  showDetailMessage('Saving…');
+  // Only save if the trade is still open (or still closed) as it was when you tapped Edit,
+  // in case it was closed or deleted on your other device in the meantime.
+  let query = db.from('trades').update(changes).eq('id', trade.id);
+  query = closed ? query.not('closed_at', 'is', null) : query.is('closed_at', null);
+  const { data, error } = await query.select('id');
+  button.disabled = false;
+  if (error) return showDetailMessage('Could not save: ' + error.message, true);
+  if (data.length === 0) {
+    return showDetailMessage('Not saved: this trade was changed or deleted on your other device. ' +
+      'Tap Back and open it again.', true);
+  }
+
+  // If the close form is open for this trade, show its new details there too.
+  if (tradeBeingClosed && tradeBeingClosed.id === trade.id) {
+    Object.assign(tradeBeingClosed, changes);
+    showCloseSummary(tradeBeingClosed);
+  }
+  loadLists();
+  // Reload the detail view from the database, so it shows exactly what was saved.
+  await showDetail(trade.id);
+  if (detailTradeId === trade.id) showDetailMessage('Changes saved.');
+});
+
+// ---- Delete a trade (from its detail view) ----
+
+// A short date for the "Are you sure?" question, e.g. "17 Oct", with the year if it isn't this year.
+function shortDate(isoText) {
+  const date = new Date(isoText);
+  const options = { day: 'numeric', month: 'short' };
+  if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric';
+  return date.toLocaleDateString(undefined, options);
+}
+
+// Names the trade, so you can tell which one is about to go, e.g.
+// "Delete Buy · -$25.00 on 17 Oct (Daily Demo)?"
+function deleteQuestion(trade) {
+  const what = trade.closed_at !== null
+    ? `${directionName(trade)} · ${signedUsd.format(Number(trade.pnl_usd))} on ${shortDate(trade.closed_at)}`
+    : `open ${directionName(trade)} · risk ${usd.format(trade.risk_usd)} from ${shortDate(trade.opened_at)}`;
+  return `Delete ${what} (${ACCOUNT_NAMES[trade.account]})?\n\n` +
+    "Its screenshots are deleted too. This can't be undone.";
+}
+
+el('delete-button').addEventListener('click', async () => {
+  const trade = detailTrade;
+  if (!trade || !window.confirm(deleteQuestion(trade))) return;
+
+  const button = el('delete-button');
+  button.disabled = true;
+  showDetailMessage('Deleting…');
+  // The database sends back the deleted row, so we know exactly which screenshots it had.
+  const { data, error } = await db
+    .from('trades')
+    .delete()
+    .eq('id', trade.id)
+    .select('open_screenshot_path, close_screenshot_path');
+  button.disabled = false;
+  if (error) return showDetailMessage('Could not delete: ' + error.message, true);
+  if (data.length === 0) {
+    return showDetailMessage('Nothing was deleted. It may already be gone (deleted on your other device). ' +
+      'Tap Back and refresh.', true);
+  }
+
+  if (tradeBeingClosed && tradeBeingClosed.id === trade.id) hideCloseForm();
+  hideDetail();
+  loadLists();
+
+  // Then the screenshots. Storage reports each file it removed, so a missing one shows here.
+  const paths = [data[0].open_screenshot_path, data[0].close_screenshot_path].filter(Boolean);
+  if (paths.length > 0) {
+    const { data: removed, error: removeError } = await db.storage.from(SCREENSHOT_BUCKET).remove(paths);
+    if (removeError || removed.length < paths.length) {
+      return showMessage('The trade was deleted, but its screenshots could not all be removed from storage' +
+        (removeError ? ': ' + removeError.message : '.'), true);
+    }
+  }
+  showMessage('Trade deleted' + (paths.length > 0 ? ', with its screenshots.' : '.'));
+});
 
 // ---- Tabs: underline the part of the page you're looking at ----
 const tabLinks = document.querySelectorAll('#tabs a');

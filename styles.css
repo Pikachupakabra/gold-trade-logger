@@ -520,6 +520,13 @@ button.secondary {
   color: var(--secondary-text);
 }
 
+/* For actions that can't be undone, like Delete: red text, so it doesn't look like the main button. */
+button.danger {
+  background: var(--secondary-bg);
+  color: var(--loss);
+  border-color: var(--loss);
+}
+
 button.small {
   min-height: 40px;
   padding: 6px 14px;
@@ -921,6 +928,39 @@ dialog.detail {
 .detail-fields dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+}
+
+/* Edit and Delete, under the details. */
+.detail-actions {
+  max-width: 520px;
+  margin-bottom: 8px;
+}
+
+/* "display: grid" above would otherwise show it while it should be hidden (still loading). */
+.detail-actions[hidden] {
+  display: none;
+}
+
+#detail-message {
+  max-width: 520px;
+  margin: 0 0 8px;
+}
+
+/* ---- Edit a trade (inside the detail view) ---- */
+.edit-form {
+  max-width: 520px;
+  margin-top: 12px;
+}
+
+.edit-form h3 {
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.2rem;
+}
+
+#edit-close-fields h3 {
+  margin-top: 8px;
 }
 
 /* Phone: the two screenshots stack. */
