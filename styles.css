@@ -253,6 +253,59 @@ dialog.detail {
   opacity: 0.7;
 }
 
+/* ---- Stats ---- */
+.stats {
+  display: grid;
+  gap: 12px;
+  margin: 4px 0 8px;
+}
+
+.stats-card {
+  border: 2px solid currentColor;
+  padding: 8px 12px;
+}
+
+.stats-card h3 {
+  margin: 0 0 4px;
+}
+
+.stats-card p {
+  margin: 2px 0;
+}
+
+.stats-card .note {
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.stats-table {
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  width: 100%;
+}
+
+.stats-table th,
+.stats-table td {
+  padding: 4px 6px;
+  text-align: right;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.stats-table thead th {
+  vertical-align: bottom;
+}
+
+.stats-table tbody th {
+  text-align: left;
+  font-weight: normal;
+  opacity: 0.8;
+}
+
 /* ---- Settings ---- */
 summary {
   cursor: pointer;

@@ -2,6 +2,7 @@
 // Signs in with email and password, opens and closes trades (with chart screenshots),
 // lists open and closed ones, and shows one trade's details with both screenshots.
 // A switch picks which account to show, with a headline of totals for each one,
+// a stats panel per account (including rules followed vs broken),
 // and a settings form holds starting balances, today's rate and the ADX threshold.
 // All data lives in Supabase, so the phone and laptop see the same trades and settings.
 
@@ -23,6 +24,7 @@ const closeSection = el('close-section');
 const closeForm = el('close-form');
 const historyList = el('history-list');
 const headlineBox = el('headline');
+const statsBox = el('stats');
 const settingsForm = el('settings-form');
 
 function showMessage(text, isError = false) {
@@ -54,6 +56,7 @@ function render(session) {
   openTradesList.innerHTML = '';
   historyList.innerHTML = '';
   headlineBox.innerHTML = '';
+  statsBox.innerHTML = '';
   openTrades = [];
   closedTrades = [];
   settings = emptySettings();
@@ -468,7 +471,7 @@ closeForm.addEventListener('submit', async (event) => {
 });
 
 // ---- History (closed trades) ----
-// Every closed trade, from both accounts. Used by History and the headline.
+// Every closed trade, from both accounts. Used by History, the headline and the stats.
 let closedTrades = [];
 
 async function loadHistory() {
@@ -482,6 +485,7 @@ async function loadHistory() {
   closedTrades = data;
   renderHistory();
   renderHeadline();
+  renderStats();
 }
 
 function renderHistory() {
@@ -556,6 +560,7 @@ for (const input of viewInputs) {
     renderOpenTrades();
     renderHistory();
     renderHeadline();
+    renderStats();
   });
 }
 
@@ -621,6 +626,138 @@ function renderHeadline() {
     line(`From ${count}. Open trades aren't counted.`, 'note');
 
     headlineBox.appendChild(card);
+  }
+}
+
+// ---- Stats: one card per account shown ----
+// Each card is a table with three columns: all closed trades, then rules followed
+// against rule break, so the comparison sits side by side.
+
+// Win rate, e.g. 58.3%.
+const percentOneDecimal = new Intl.NumberFormat('en-US', {
+  style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1,
+});
+
+// The stats for one group of closed trades, worked out as the spec's "Stat definitions" say.
+// Only maths here, no page changes. A value is null when there's nothing to work it out from.
+function groupStats(trades) {
+  const winTimesRisk = [];
+  const lossTimesRisk = [];
+  let sumTimesRisk = 0;
+  let winCents = 0;
+  let lossCents = 0;
+  for (const trade of trades) {
+    const { pnlUsd, timesRisk } = closedResult(trade);
+    sumTimesRisk += timesRisk;
+    // A win is P&L above zero. A loss is P&L below zero. A trade at exactly $0 is neither,
+    // but it still counts as a closed trade.
+    if (pnlUsd > 0) {
+      winTimesRisk.push(timesRisk);
+      winCents += toCents(pnlUsd);
+    } else if (pnlUsd < 0) {
+      lossTimesRisk.push(Math.abs(timesRisk));
+      lossCents += Math.abs(toCents(pnlUsd));
+    }
+  }
+
+  const count = trades.length;
+  const wins = winTimesRisk.length;
+  const losses = lossTimesRisk.length;
+  const average = (values) => (values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length);
+  const winRate = count === 0 ? null : wins / count;
+  const lossRate = count === 0 ? null : losses / count;
+
+  return {
+    count,
+    wins,
+    losses,
+    winRate,
+    averageTimesRisk: count === 0 ? null : sumTimesRisk / count,
+    // (win rate × average winning × risk) − (loss rate × average losing × risk, as a positive number)
+    expectancy: count === 0 ? null : winRate * average(winTimesRisk) - lossRate * average(lossTimesRisk),
+    // Winning dollars ÷ losing dollars. Shown as "—" until there's a loss.
+    profitFactor: losses === 0 ? null : winCents / lossCents,
+  };
+}
+
+// A × risk value without the words, for the table, e.g. +0.45 or -1.00.
+function formatTimesRiskNumber(value) {
+  return `${signOf(value)}${twoDecimals.format(Math.abs(value))}`;
+}
+
+function renderStats() {
+  const view = selectedView();
+  const accounts = view === 'both' ? ['daily', 'backtest'] : [view];
+
+  statsBox.innerHTML = '';
+  for (const account of accounts) {
+    const trades = closedTrades.filter((trade) => trade.account === account);
+    const card = document.createElement('div');
+    card.className = 'stats-card';
+
+    const title = document.createElement('h3');
+    title.textContent = ACCOUNT_NAMES[account];
+    card.appendChild(title);
+
+    if (trades.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'note';
+      empty.textContent = 'No closed trades yet.';
+      card.appendChild(empty);
+      statsBox.appendChild(card);
+      continue;
+    }
+
+    const all = groupStats(trades);
+    const followed = groupStats(trades.filter(followedRules));
+    const broken = groupStats(trades.filter((trade) => !followedRules(trade)));
+    const groups = [all, followed, broken];
+
+    const ruleBreaks = document.createElement('p');
+    ruleBreaks.textContent = `Rule breaks: ${broken.count} of ${all.count} closed trades.`;
+    card.appendChild(ruleBreaks);
+
+    // Each row: its name, and how to show one group's value (null shows as "—").
+    const rows = [
+      ['Closed trades', (stats) => String(stats.count)],
+      ['Wins', (stats) => String(stats.wins)],
+      ['Losses', (stats) => String(stats.losses)],
+      ['Win rate', (stats) => stats.winRate === null ? '—' : percentOneDecimal.format(stats.winRate)],
+      ['Average × risk', (stats) => stats.averageTimesRisk === null ? '—' : formatTimesRiskNumber(stats.averageTimesRisk)],
+      ['Expectancy (× risk)', (stats) => stats.expectancy === null ? '—' : formatTimesRiskNumber(stats.expectancy)],
+      ['Profit factor', (stats) => stats.profitFactor === null ? '—' : twoDecimals.format(stats.profitFactor)],
+    ];
+
+    const table = document.createElement('table');
+    table.className = 'stats-table';
+    const headRow = table.createTHead().insertRow();
+    for (const name of ['', 'All', 'Rules followed', 'Rule break']) {
+      const cell = document.createElement('th');
+      cell.scope = 'col';
+      cell.textContent = name;
+      headRow.appendChild(cell);
+    }
+    const body = table.createTBody();
+    for (const [name, show] of rows) {
+      const row = body.insertRow();
+      const nameCell = document.createElement('th');
+      nameCell.scope = 'row';
+      nameCell.textContent = name;
+      row.appendChild(nameCell);
+      for (const stats of groups) row.insertCell().textContent = show(stats);
+    }
+    // On a narrow phone the table can scroll sideways instead of squashing.
+    const scroller = document.createElement('div');
+    scroller.className = 'table-scroll';
+    scroller.appendChild(table);
+    card.appendChild(scroller);
+
+    const note = document.createElement('p');
+    note.className = 'note';
+    note.textContent = "Open trades aren't counted. A trade at exactly $0 is neither a win nor a loss.";
+    card.appendChild(note);
+
+    statsBox.appendChild(card);
   }
 }
 
