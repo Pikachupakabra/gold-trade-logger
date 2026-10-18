@@ -2,7 +2,7 @@
 // Signs in with email and password, opens and closes trades (with chart screenshots),
 // lists open and closed ones, and shows one trade's details with both screenshots.
 // A switch picks which account to show, with a headline of totals for each one,
-// a stats panel per account (including rules followed vs broken),
+// a stats panel per account (including rules followed vs broken), a CSV download of closed trades,
 // and a settings form holds starting balances, today's rate and the ADX threshold.
 // All data lives in Supabase, so the phone and laptop see the same trades and settings.
 
@@ -62,6 +62,7 @@ function render(session) {
   settings = emptySettings();
   hideCloseForm();
   hideDetail();
+  showExportStatus('');
   if (userId) {
     el('user-email').textContent = session.user.email;
     openForm.reset();
@@ -297,6 +298,14 @@ openForm.addEventListener('submit', async (event) => {
 });
 
 // ---- Pieces shared by both lists ----
+// The four checklist tick-boxes, with short names for the detail view and the CSV file.
+const CHECKLIST = [
+  ['check_h1_bias', '1H Supertrend matches direction'],
+  ['check_m15_flip', '15m Supertrend flipped to match'],
+  ['check_adx', 'ADX above threshold'],
+  ['check_stop', 'Stop at planned distance'],
+];
+
 function followedRules(trade) {
   return trade.check_h1_bias && trade.check_m15_flip && trade.check_adx && trade.check_stop;
 }
@@ -524,6 +533,127 @@ function renderHistory() {
   }
 }
 
+// ---- CSV export (closed trades, for Excel or Google Sheets) ----
+// Exports the account the switch shows (or both), one row per closed trade, oldest first.
+// The file is laid out the way Excel expects on South African settings: values split by
+// semicolons, and a comma as the decimal point (e.g. -25,5). Tested on the owner's laptop:
+// with commas between values, Excel put each whole trade into a single cell.
+const exportButton = el('export-button');
+
+function updateExportButton() {
+  const view = selectedView();
+  exportButton.textContent = view === 'both'
+    ? 'Download CSV (both accounts)'
+    : `Download CSV (${ACCOUNT_NAMES[view]})`;
+}
+
+// Rounds to a number of decimal places, with halves going away from zero.
+function roundTo(value, places) {
+  const factor = 10 ** places;
+  return Math.sign(value) * Math.round(Math.abs(value) * factor) / factor;
+}
+
+// A number with a comma as the decimal point and no thousands separator, e.g. -1234,5.
+// An empty value (null) stays an empty cell.
+function csvNumber(value) {
+  return value === null ? '' : String(value).replace('.', ',');
+}
+
+// Text is wrapped in quotes when it holds a separator, quote or line break.
+// Text starting with = + - or @ gets an apostrophe in front, so Excel shows it as typed
+// instead of trying to work it out as a formula (e.g. a lesson like "-wait for the close").
+function csvText(text) {
+  if (text === null || text === '') return '';
+  let value = /^[=+\-@]/.test(text) ? `'${text}` : text;
+  if (/[;",\r\n]/.test(value)) value = `"${value.replace(/"/g, '""')}"`;
+  return value;
+}
+
+// A date and time as the spreadsheet should read it, e.g. 2026-10-17 14:30 (this device's local time).
+function csvWhen(isoText) {
+  return toLocalInputValue(new Date(isoText)).replace('T', ' ');
+}
+
+const yesNo = (value) => (value ? 'Yes' : 'No');
+
+// Each column: its heading, and how to fill it in for one trade.
+const CSV_COLUMNS = [
+  ['Account', (trade) => csvText(ACCOUNT_NAMES[trade.account])],
+  ['Opened', (trade) => csvWhen(trade.opened_at)],
+  ['Closed', (trade) => csvWhen(trade.closed_at)],
+  ['Direction', (trade) => csvText(directionName(trade))],
+  ['Risk (USD)', (trade) => csvNumber(Number(trade.risk_usd))],
+  ['ADX', (trade) => csvNumber(trade.adx === null ? null : Number(trade.adx))],
+  ...CHECKLIST.map(([field, name]) => [name, (trade) => yesNo(trade[field])]),
+  ['Rules followed', (trade) => yesNo(followedRules(trade))],
+  ['P&L (USD)', (trade) => csvNumber(Number(trade.pnl_usd))],
+  ['USD/ZAR rate', (trade) => csvNumber(Number(trade.usdzar_rate))],
+  // Rounded to the cent, the same as History shows it.
+  ['P&L (ZAR)', (trade) => csvNumber(toCents(closedResult(trade).pnlZar) / 100)],
+  // Four decimal places, so averages worked out in the spreadsheet match the app's stats.
+  ['× risk', (trade) => csvNumber(roundTo(closedResult(trade).timesRisk, 4))],
+  ['Win', (trade) => yesNo(Number(trade.pnl_usd) > 0)],
+  ['Mistake', (trade) => csvText(trade.mistake_tag)],
+  ['Lesson', (trade) => csvText(trade.lesson)],
+];
+
+// The whole file as text: a heading row, then one row per trade.
+function buildCsv(trades) {
+  const rows = [CSV_COLUMNS.map(([heading]) => csvText(heading))];
+  for (const trade of trades) rows.push(CSV_COLUMNS.map(([, value]) => value(trade)));
+  return rows.map((cells) => cells.join(';')).join('\r\n') + '\r\n';
+}
+
+// Hands the text to the browser as a file to save.
+function downloadFile(fileName, text) {
+  // The invisible mark at the start (a "byte order mark") tells Excel the file is UTF-8,
+  // so characters like × show properly.
+  const blob = new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // Give the browser a moment to start the download before letting go of the file.
+  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+}
+
+// The button is far down the page, so its messages show right under it.
+function showExportStatus(text, isError = false) {
+  const status = el('export-status');
+  status.textContent = text;
+  status.classList.toggle('error', isError);
+  status.hidden = !text;
+}
+
+exportButton.addEventListener('click', async () => {
+  const view = selectedView();
+  exportButton.disabled = true;
+  showExportStatus('Preparing the file…');
+  // Fetched fresh, so trades closed on your other device since the page loaded are included.
+  let query = db
+    .from('trades')
+    .select('account, opened_at, direction, risk_usd, adx, check_h1_bias, check_m15_flip, check_adx, ' +
+      'check_stop, closed_at, pnl_usd, usdzar_rate, mistake_tag, lesson')
+    .not('closed_at', 'is', null)
+    .order('closed_at', { ascending: true });
+  if (view !== 'both') query = query.eq('account', view);
+  const { data, error } = await query;
+  exportButton.disabled = false;
+  if (error) return showExportStatus('Could not export: ' + error.message, true);
+
+  if (data.length === 0) {
+    const where = view === 'both' ? '' : ` on ${ACCOUNT_NAMES[view]}`;
+    return showExportStatus(`No closed trades to export${where}.`, true);
+  }
+  const today = toLocalInputValue(new Date()).slice(0, 10);
+  const fileName = `gold-trades-${view === 'both' ? 'both-accounts' : view}-${today}.csv`;
+  downloadFile(fileName, buildCsv(data));
+  const count = data.length === 1 ? '1 closed trade' : `${data.length} closed trades`;
+  showExportStatus(`Downloaded ${fileName} (${count}).`);
+});
+
 // ---- Account switch: Daily Demo, Backtest or Both ----
 // Remembered on this device only, so the phone and laptop can each show a different account.
 const VIEW_STORAGE_KEY = 'gold-trade-logger:view';
@@ -548,6 +678,7 @@ function selectRememberedView() {
   }
   for (const input of viewInputs) input.checked = input.value === view;
   if (!document.querySelector('input[name="view"]:checked')) viewInputs[viewInputs.length - 1].checked = true;
+  updateExportButton();
 }
 
 for (const input of viewInputs) {
@@ -561,6 +692,8 @@ for (const input of viewInputs) {
     renderHistory();
     renderHeadline();
     renderStats();
+    updateExportButton();
+    showExportStatus('');
   });
 }
 
@@ -855,13 +988,6 @@ settingsForm.addEventListener('submit', async (event) => {
 const detailDialog = el('detail-dialog');
 // The trade the detail view is showing, so a slow answer for an earlier tap is ignored.
 let detailTradeId = null;
-
-const CHECKLIST = [
-  ['check_h1_bias', '1H Supertrend matches direction'],
-  ['check_m15_flip', '15m Supertrend flipped to match'],
-  ['check_adx', 'ADX above threshold'],
-  ['check_stop', 'Stop at planned distance'],
-];
 
 async function showDetail(tradeId) {
   detailTradeId = tradeId;
