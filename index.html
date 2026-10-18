@@ -2,9 +2,29 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- viewport-fit=cover lets the app use the whole screen on phones with a notch;
+       styles.css keeps content clear of the notch and the home bar. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Gold Trade Logger</title>
+
+  <!-- Home-screen install: name, icon and colours. -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Gold Log">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <!-- The phone's top bar colour, matching the app's light or dark look. -->
+  <meta name="theme-color" content="#15171b" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+
+  <!-- Barlow Semi Condensed: a narrow font close to Lap Tracker's, used for headings and numbers. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&display=swap">
   <link rel="stylesheet" href="styles.css">
+
   <!-- Supabase's JavaScript library, pinned to one exact version.
        "integrity" makes the browser refuse the file if the CDN ever serves something different. -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"
@@ -13,170 +33,226 @@
   <script src="app.js" defer></script>
 </head>
 <body>
+  <header class="app-bar">
+    <a class="brand" href="#">
+      <img src="icons/icon.svg" alt="" width="28" height="28">
+      <span>Gold Trade Logger</span>
+    </a>
+    <!-- Jumps to each part of the page. A bar at the bottom on a phone (in thumb reach), tabs at the top on a laptop. -->
+    <nav id="tabs" class="tabs" aria-label="Sections" hidden>
+      <a href="#summary-section">Summary</a>
+      <a href="#open-section">Open</a>
+      <a href="#new-section">New</a>
+      <a href="#history-section">History</a>
+      <a href="#settings-section">Settings</a>
+    </nav>
+  </header>
+
   <main>
-    <h1>Gold Trade Logger</h1>
-    <p id="message" class="message" hidden></p>
+    <!-- Tap to hide. Messages that aren't errors also hide by themselves after a few seconds. -->
+    <p id="message" class="message" role="status" hidden></p>
 
     <!-- Shown when signed out -->
-    <section id="signed-out" hidden>
-      <h2>Sign in</h2>
-      <form id="sign-in-form">
-        <label>Email
-          <input type="email" id="email" autocomplete="email" required>
-        </label>
-        <label>Password
-          <input type="password" id="password" autocomplete="current-password" minlength="8" required>
-        </label>
-        <button type="submit">Sign in</button>
-        <button type="button" id="sign-up-button" class="secondary">Create account (first time only)</button>
-      </form>
+    <section id="signed-out" class="panel narrow" hidden>
+      <h2 class="panel-title">Sign in</h2>
+      <div class="panel-body">
+        <form id="sign-in-form">
+          <label>Email
+            <input type="email" id="email" autocomplete="email" required>
+          </label>
+          <label>Password
+            <input type="password" id="password" autocomplete="current-password" minlength="8" required>
+          </label>
+          <div class="actions">
+            <button type="submit">Sign in</button>
+            <button type="button" id="sign-up-button" class="secondary">Create account (first time only)</button>
+          </div>
+        </form>
+      </div>
     </section>
 
     <!-- Shown when signed in -->
-    <section id="signed-in" hidden>
-      <p>Signed in as <strong id="user-email"></strong></p>
-      <button type="button" id="sign-out-button" class="secondary">Sign out</button>
-
-      <!-- Which account to show. Filters the headline and both lists. -->
-      <fieldset id="view-switch">
+    <div id="signed-in" hidden>
+      <!-- Which account to show. Filters the headline, stats and both lists. -->
+      <fieldset id="view-switch" class="segmented filter-bar">
         <legend>Show</legend>
         <label class="choice"><input type="radio" name="view" value="daily"> Daily Demo</label>
         <label class="choice"><input type="radio" name="view" value="backtest"> Backtest</label>
         <label class="choice"><input type="radio" name="view" value="both" checked> Both</label>
       </fieldset>
 
-      <!-- Headline: one card per account shown, filled in by app.js -->
-      <div id="headline" class="headline"></div>
+      <section id="summary-section" class="panel">
+        <h2 class="panel-title">Summary</h2>
+        <div class="panel-body">
+          <!-- Headline: one card per account shown, filled in by app.js -->
+          <div id="headline" class="headline"></div>
 
-      <!-- Stats: one card per account shown, filled in by app.js -->
-      <h2>Stats</h2>
-      <details id="stats-box">
-        <summary>Win rate, × risk, profit factor, rules followed vs broken</summary>
-        <div id="stats" class="stats"></div>
-      </details>
-
-      <h2>Open a trade</h2>
-      <form id="open-form">
-        <fieldset>
-          <legend>Account</legend>
-          <label class="choice"><input type="radio" name="account" value="daily" required> Daily Demo</label>
-          <label class="choice"><input type="radio" name="account" value="backtest"> Backtest</label>
-        </fieldset>
-
-        <label>Opened at
-          <input type="datetime-local" id="opened-at" required>
-        </label>
-
-        <fieldset>
-          <legend>Direction</legend>
-          <label class="choice"><input type="radio" name="direction" value="buy" required> Buy</label>
-          <label class="choice"><input type="radio" name="direction" value="sell"> Sell</label>
-        </fieldset>
-
-        <label>Risk ($)
-          <input type="number" id="risk-usd" inputmode="decimal" min="0.01" step="0.01" required>
-        </label>
-
-        <label>ADX (optional)
-          <input type="number" id="adx" inputmode="decimal" min="0" max="100" step="0.1">
-        </label>
-
-        <fieldset>
-          <legend>Entry checklist</legend>
-          <label class="check"><input type="checkbox" id="check-h1-bias"> The 1H Supertrend matches the trade direction.</label>
-          <label class="check"><input type="checkbox" id="check-m15-flip"> The 15m Supertrend has flipped to match.</label>
-          <label class="check"><input type="checkbox" id="check-adx"> <span>ADX is above the threshold (<span id="adx-threshold-text">20</span>).</span></label>
-          <label class="check"><input type="checkbox" id="check-stop"> The stop is placed at the planned distance.</label>
-        </fieldset>
-
-        <label>Chart screenshot (optional)
-          <input type="file" id="open-screenshot" accept="image/*">
-        </label>
-
-        <button type="submit" id="open-button">Open trade</button>
-      </form>
-
-      <h2>Open trades</h2>
-      <button type="button" id="refresh-button" class="secondary">Refresh lists</button>
-
-      <!-- Shown when you tap "Close trade" on one of the open trades -->
-      <section id="close-section" class="close-box" hidden>
-        <h3>Close a trade</h3>
-        <p id="close-summary"></p>
-        <form id="close-form">
-          <label>Closed at
-            <input type="datetime-local" id="closed-at" required>
-          </label>
-
-          <!-- No inputmode here on purpose: the phone's decimal keypad has no minus key, and losses need one. -->
-          <label>P&amp;L ($), exactly as MT5 shows it. Use a minus sign for a loss, e.g. -25.50
-            <input type="number" id="pnl-usd" step="0.01" required>
-          </label>
-
-          <label>USD/ZAR rate
-            <input type="number" id="usdzar-rate" inputmode="decimal" min="0.0001" step="0.0001" required>
-          </label>
-
-          <label>Mistake (optional)
-            <select id="mistake-tag">
-              <option value="">None</option>
-              <option value="moved stop">Moved stop</option>
-              <option value="closed early">Closed early</option>
-              <option value="chased entry">Chased entry</option>
-              <option value="traded news">Traded news</option>
-              <option value="no setup">No setup</option>
-            </select>
-          </label>
-
-          <label>Lesson (optional, one line)
-            <input type="text" id="lesson" maxlength="300">
-          </label>
-
-          <label>Chart screenshot (optional)
-            <input type="file" id="close-screenshot" accept="image/*">
-          </label>
-
-          <button type="submit" id="close-button">Close trade</button>
-          <button type="button" id="cancel-close-button" class="secondary">Cancel</button>
-        </form>
+          <!-- Stats: one card per account shown, filled in by app.js -->
+          <details id="stats-box">
+            <summary>Stats: win rate, × risk, profit factor, rules followed vs broken</summary>
+            <div id="stats" class="stats"></div>
+          </details>
+        </div>
       </section>
 
-      <ul id="open-trades-list" class="trades"></ul>
+      <div class="columns">
+        <section id="open-section" class="panel">
+          <div class="panel-title">
+            <h2>Open trades</h2>
+            <button type="button" id="refresh-button" class="secondary small">Refresh</button>
+          </div>
+          <div class="panel-body">
+            <!-- Shown when you tap "Close trade" on one of the open trades -->
+            <section id="close-section" class="close-box" hidden>
+              <h3>Close a trade</h3>
+              <p id="close-summary" class="muted"></p>
+              <form id="close-form">
+                <label>Closed at
+                  <input type="datetime-local" id="closed-at" required>
+                </label>
 
-      <h2>History</h2>
-      <!-- Downloads the closed trades for the account the switch shows. Its label changes with the switch. -->
-      <button type="button" id="export-button" class="secondary">Download CSV (both accounts)</button>
-      <p id="export-status" class="status" hidden></p>
-      <ul id="history-list" class="trades"></ul>
+                <!-- No inputmode here on purpose: the phone's decimal keypad has no minus key, and losses need one. -->
+                <label>P&amp;L ($)
+                  <small>Exactly as MT5 shows it. Use a minus sign for a loss, e.g. -25.50</small>
+                  <input type="number" id="pnl-usd" step="0.01" required>
+                </label>
 
-      <h2>Settings</h2>
-      <details id="settings-box">
-        <summary>Starting balances, today's rate, ADX threshold</summary>
-        <form id="settings-form">
-          <label>Daily Demo starting balance ($)
-            <input type="number" id="start-balance-daily" inputmode="decimal" min="0.01" step="0.01">
-          </label>
-          <label>Backtest starting balance ($)
-            <input type="number" id="start-balance-backtest" inputmode="decimal" min="0.01" step="0.01">
-          </label>
-          <label>Today's USD/ZAR rate
-            <small>Only used for totals "at today's rate". Each closed trade keeps its own rate.</small>
-            <input type="number" id="usdzar-today" inputmode="decimal" min="0.0001" step="0.0001">
-          </label>
-          <label>ADX threshold
-            <input type="number" id="adx-threshold" inputmode="decimal" min="0" max="100" step="0.1" required>
-          </label>
-          <button type="submit" id="settings-button">Save settings</button>
-          <p id="settings-status" class="status" hidden></p>
-        </form>
-      </details>
-    </section>
+                <label>USD/ZAR rate
+                  <input type="number" id="usdzar-rate" inputmode="decimal" min="0.0001" step="0.0001" required>
+                </label>
+
+                <label>Mistake (optional)
+                  <select id="mistake-tag">
+                    <option value="">None</option>
+                    <option value="moved stop">Moved stop</option>
+                    <option value="closed early">Closed early</option>
+                    <option value="chased entry">Chased entry</option>
+                    <option value="traded news">Traded news</option>
+                    <option value="no setup">No setup</option>
+                  </select>
+                </label>
+
+                <label>Lesson (optional, one line)
+                  <input type="text" id="lesson" maxlength="300">
+                </label>
+
+                <label>Chart screenshot (optional)
+                  <input type="file" id="close-screenshot" accept="image/*">
+                </label>
+
+                <div class="actions">
+                  <button type="submit" id="close-button">Close trade</button>
+                  <button type="button" id="cancel-close-button" class="secondary">Cancel</button>
+                </div>
+              </form>
+            </section>
+
+            <ul id="open-trades-list" class="trades"></ul>
+          </div>
+        </section>
+
+        <section id="new-section" class="panel">
+          <h2 class="panel-title">Open a trade</h2>
+          <div class="panel-body">
+            <form id="open-form">
+              <fieldset class="segmented">
+                <legend>Account</legend>
+                <label class="choice"><input type="radio" name="account" value="daily" required> Daily Demo</label>
+                <label class="choice"><input type="radio" name="account" value="backtest"> Backtest</label>
+              </fieldset>
+
+              <label>Opened at
+                <input type="datetime-local" id="opened-at" required>
+              </label>
+
+              <fieldset class="segmented direction">
+                <legend>Direction</legend>
+                <label class="choice buy"><input type="radio" name="direction" value="buy" required> Buy</label>
+                <label class="choice sell"><input type="radio" name="direction" value="sell"> Sell</label>
+              </fieldset>
+
+              <div class="pair">
+                <label>Risk ($)
+                  <input type="number" id="risk-usd" inputmode="decimal" min="0.01" step="0.01" required>
+                </label>
+
+                <label>ADX (optional)
+                  <input type="number" id="adx" inputmode="decimal" min="0" max="100" step="0.1">
+                </label>
+              </div>
+
+              <fieldset class="checklist">
+                <legend>Entry checklist</legend>
+                <label class="check"><input type="checkbox" id="check-h1-bias"> The 1H Supertrend matches the trade direction.</label>
+                <label class="check"><input type="checkbox" id="check-m15-flip"> The 15m Supertrend has flipped to match.</label>
+                <label class="check"><input type="checkbox" id="check-adx"> <span>ADX is above the threshold (<span id="adx-threshold-text">20</span>).</span></label>
+                <label class="check"><input type="checkbox" id="check-stop"> The stop is placed at the planned distance.</label>
+              </fieldset>
+
+              <label>Chart screenshot (optional)
+                <input type="file" id="open-screenshot" accept="image/*">
+              </label>
+
+              <div class="actions">
+                <button type="submit" id="open-button">Open trade</button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>
+
+      <section id="history-section" class="panel">
+        <h2 class="panel-title">History</h2>
+        <div class="panel-body">
+          <!-- Downloads the closed trades for the account the switch shows. Its label changes with the switch. -->
+          <button type="button" id="export-button" class="secondary">Download CSV (both accounts)</button>
+          <p id="export-status" class="status" hidden></p>
+          <ul id="history-list" class="trades"></ul>
+        </div>
+      </section>
+
+      <section id="settings-section" class="panel">
+        <h2 class="panel-title">Settings</h2>
+        <div class="panel-body">
+          <form id="settings-form">
+            <div class="pair">
+              <label>Daily Demo starting balance ($)
+                <input type="number" id="start-balance-daily" inputmode="decimal" min="0.01" step="0.01">
+              </label>
+              <label>Backtest starting balance ($)
+                <input type="number" id="start-balance-backtest" inputmode="decimal" min="0.01" step="0.01">
+              </label>
+            </div>
+            <div class="pair">
+              <label>Today's USD/ZAR rate
+                <small>Only used for totals "at today's rate". Each closed trade keeps its own rate.</small>
+                <input type="number" id="usdzar-today" inputmode="decimal" min="0.0001" step="0.0001">
+              </label>
+              <label>ADX threshold
+                <input type="number" id="adx-threshold" inputmode="decimal" min="0" max="100" step="0.1" required>
+              </label>
+            </div>
+            <div class="actions">
+              <button type="submit" id="settings-button">Save settings</button>
+            </div>
+            <p id="settings-status" class="status" hidden></p>
+          </form>
+
+          <div class="account-line">
+            <p class="muted">Signed in as <strong id="user-email"></strong></p>
+            <button type="button" id="sign-out-button" class="secondary small">Sign out</button>
+          </div>
+        </div>
+      </section>
+    </div>
   </main>
 
   <!-- Trade detail: shown over the page when you tap "Details" on a trade -->
   <dialog id="detail-dialog" class="detail">
+    <div class="detail-bar">
+      <button type="button" id="detail-back-button" class="secondary small">← Back</button>
+    </div>
     <div class="detail-inner">
-      <button type="button" id="detail-back-button" class="secondary">Back</button>
       <h2 id="detail-title"></h2>
       <p id="detail-status"></p>
       <dl id="detail-fields" class="detail-fields"></dl>

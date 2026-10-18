@@ -1,152 +1,860 @@
-/* Bare working styles. Proper design comes in Task 8. */
+/* Gold Trade Logger styles.
+   Look based on the owner's Lap Tracker app: dark panels with a title strip, narrow bold
+   headings, grey labels over big numbers, white main buttons and dark secondary ones.
+   Mobile-first: the plain rules are for a phone, and the @media blocks add the laptop layout.
+   Light or dark follows the device's own setting. */
+
+/* ---- Colours ---- */
+/* Dark (Lap Tracker's look) is the starting point. */
 :root {
-  color-scheme: light dark;
-  font-family: system-ui, sans-serif;
-  font-size: 18px;
+  color-scheme: dark;
+  --bg: #15171b;
+  --bar: #111316;
+  --panel: #1a1d22;
+  --panel-head: #1f2228;
+  --border: #2b2f36;
+  --field: #22262c;
+  --field-border: #383d45;
+  --text: #e9ebee;
+  --muted: #959ba4;
+  --primary-bg: #f2f3f5;
+  --primary-text: #111316;
+  --secondary-bg: #2b2f36;
+  --secondary-text: #e9ebee;
+  --win: #3ddc84;
+  --loss: #ff6b6b;
+  --gold: #e5b84b;
+  --win-soft: rgba(61, 220, 132, 0.14);
+  --loss-soft: rgba(255, 107, 107, 0.14);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #eef0f3;
+    --bar: #ffffff;
+    --panel: #ffffff;
+    --panel-head: #f6f7f9;
+    --border: #dcdfe4;
+    --field: #ffffff;
+    --field-border: #c3c8cf;
+    --text: #15171b;
+    --muted: #5b616a;
+    --primary-bg: #15171b;
+    --primary-text: #ffffff;
+    --secondary-bg: #e4e7eb;
+    --secondary-text: #15171b;
+    --win: #17803d;
+    --loss: #c62828;
+    --gold: #9a6f0c;
+    --win-soft: rgba(23, 128, 61, 0.1);
+    --loss-soft: rgba(198, 40, 40, 0.08);
+  }
+}
+
+/* ---- Fonts and sizes ---- */
+:root {
+  --narrow: 'Barlow Semi Condensed', 'Bahnschrift', 'Arial Narrow', sans-serif;
+  --body: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --bar-height: 56px;
+  --radius: 6px;
+  font-family: var(--body);
+  font-size: 17px;
   line-height: 1.4;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  /* Room at the bottom for the phone's tab bar and home bar. */
+  padding-bottom: calc(var(--bar-height) + env(safe-area-inset-bottom) + 16px);
+  -webkit-tap-highlight-color: transparent;
 }
 
+h1, h2, h3, legend, button, .tabs, .brand, summary, label, figcaption, th, dt {
+  font-family: var(--narrow);
+}
+
+h2, h3 {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+a {
+  color: inherit;
+}
+
+.muted,
+.note {
+  color: var(--muted);
+}
+
+.note {
+  font-size: 0.85rem;
+}
+
+/* ---- Top bar and tabs ---- */
+.app-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: calc(var(--bar-height) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+  background: var(--bar);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  font-size: 1.35rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.brand img {
+  display: block;
+  border-radius: 6px;
+}
+
+/* Phone: a bar fixed to the bottom of the screen, where a thumb can reach it. */
+.tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--bar);
+  border-top: 1px solid var(--border);
+}
+
+.tabs[hidden] {
+  display: none;
+}
+
+.tabs a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--bar-height);
+  color: var(--muted);
+  font-size: 1.02rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* The part of the page you're looking at gets a line, like Lap Tracker's tabs. */
+.tabs a.active {
+  color: var(--text);
+  box-shadow: inset 0 3px 0 var(--text);
+}
+
+/* Laptop: tabs sit in the top bar, with the line underneath. */
+@media (min-width: 768px) {
+  body {
+    padding-bottom: 32px;
+  }
+
+  .tabs {
+    position: static;
+    display: flex;
+    align-self: stretch;
+    gap: 4px;
+    padding: 0;
+    background: none;
+    border: none;
+  }
+
+  .tabs a {
+    height: auto;
+    padding: 0 12px;
+    font-size: 1.1rem;
+  }
+
+  .tabs a.active {
+    box-shadow: inset 0 -2px 0 var(--text);
+  }
+
+  .tabs a:hover {
+    color: var(--text);
+  }
+}
+
+/* Jumping to a part of the page stops below the sticky top bar. */
+.panel,
+.close-box {
+  scroll-margin-top: calc(var(--bar-height) + env(safe-area-inset-top) + 12px);
+}
+
+/* ---- Page layout ---- */
 main {
-  max-width: 480px;
+  max-width: 1100px;
   margin: 0 auto;
+  padding: 12px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
 }
 
+/* Laptop: Open trades and the new-trade form side by side. */
+.columns {
+  display: grid;
+  gap: 0 16px;
+}
+
+@media (min-width: 960px) {
+  main {
+    padding-top: 16px;
+  }
+
+  .columns {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+}
+
+/* ---- Panels: a box with a title strip, like Lap Tracker ---- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+.panel.narrow {
+  max-width: 460px;
+  margin: 24px auto;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  margin: 0;
+  padding: 6px 14px;
+  background: var(--panel-head);
+  border-bottom: 1px solid var(--border);
+  font-size: 1.1rem;
+}
+
+.panel-title h2 {
+  margin: 0;
+  font-size: inherit;
+}
+
+.panel-body {
+  padding: 14px;
+}
+
+/* ---- Messages ---- */
+/* Stays in view under the top bar while you scroll. */
+.message {
+  position: sticky;
+  top: calc(var(--bar-height) + env(safe-area-inset-top) + 8px);
+  z-index: 15;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  background: var(--panel-head);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--gold);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+.message.error {
+  border-left-color: var(--loss);
+  color: var(--loss);
+}
+
+.status {
+  margin: 10px 0 0;
+  color: var(--muted);
+}
+
+.status.error {
+  color: var(--loss);
+}
+
+/* ---- Form fields ---- */
+form {
+  margin: 0;
+}
+
+/* Grey label above its box, like Lap Tracker's "Lap time" fields. */
 label {
   display: block;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+label small {
+  display: block;
+  font-family: var(--body);
+  font-size: 0.82rem;
+  font-weight: normal;
 }
 
 input,
 select {
   display: block;
   width: 100%;
-  box-sizing: border-box;
-  padding: 10px;
+  min-height: 48px;
+  margin-top: 5px;
+  padding: 10px 12px;
+  background: var(--field);
+  color: var(--text);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius);
+  font: inherit;
+  font-family: var(--body);
   font-size: 1rem;
-  margin-top: 4px;
+  font-weight: normal;
 }
 
+input:focus-visible,
+select:focus-visible,
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+input[type="file"] {
+  padding: 6px;
+  font-size: 0.9rem;
+}
+
+input[type="file"]::file-selector-button {
+  margin-right: 10px;
+  padding: 8px 12px;
+  background: var(--secondary-bg);
+  color: var(--secondary-text);
+  border: none;
+  border-radius: 4px;
+  font: 600 0.95rem var(--narrow);
+}
+
+/* Two short boxes side by side (e.g. Risk and ADX). */
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 12px;
+}
+
+/* Settings: the boxes have long labels, so stack them on a phone. */
+#settings-form .pair {
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 600px) {
+  #settings-form .pair {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+fieldset {
+  min-width: 0;
+  margin: 0 0 14px;
+  padding: 0;
+  border: none;
+}
+
+legend {
+  margin-bottom: 5px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+/* ---- Big toggle buttons (account, direction, the Show switch) ---- */
+/* Each choice is a real radio button, hidden, inside a label that looks like a button. */
+.segmented {
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  gap: 6px;
+}
+
+label.choice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--field);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 1.05rem;
+  text-align: center;
+  cursor: pointer;
+}
+
+label.choice input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+label.choice:has(input:checked) {
+  background: var(--primary-bg);
+  border-color: var(--primary-bg);
+  color: var(--primary-text);
+}
+
+label.choice:has(input:focus-visible) {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+/* Buy is green and Sell is red once chosen, so the direction is obvious at a glance. */
+.direction label.buy:has(input:checked) {
+  background: var(--win);
+  border-color: var(--win);
+  color: #0b0d10;
+}
+
+.direction label.sell:has(input:checked) {
+  background: var(--loss);
+  border-color: var(--loss);
+  color: #0b0d10;
+}
+
+@media (prefers-color-scheme: light) {
+  .direction label.buy:has(input:checked),
+  .direction label.sell:has(input:checked) {
+    color: #ffffff;
+  }
+}
+
+/* The Show switch sits above everything, like Lap Tracker's filter row. */
+.filter-bar {
+  margin-bottom: 14px;
+}
+
+@media (min-width: 768px) {
+  .filter-bar {
+    max-width: 520px;
+  }
+}
+
+/* ---- Entry checklist: each line is a big tap area ---- */
+.checklist {
+  display: grid;
+  gap: 6px;
+}
+
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--field);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 0.95rem;
+  font-weight: normal;
+  cursor: pointer;
+}
+
+label.check:has(input:checked) {
+  border-color: var(--win);
+  background: var(--win-soft);
+}
+
+label.check input {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--win);
+}
+
+/* ---- Buttons ---- */
+/* Main action: white on dark (black on light), like Lap Tracker's "Save" and "Rescan now". */
 button {
-  padding: 10px 16px;
+  min-height: 48px;
+  padding: 10px 18px;
+  background: var(--primary-bg);
+  color: var(--primary-text);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-size: 1.08rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: var(--secondary-bg);
+  color: var(--secondary-text);
+}
+
+button.small {
+  min-height: 40px;
+  padding: 6px 14px;
   font-size: 1rem;
-  margin: 0 8px 8px 0;
 }
 
 button:disabled {
   opacity: 0.5;
+  cursor: default;
 }
 
-button.secondary {
-  opacity: 0.8;
+/* A form's buttons fill the width on a phone, so they're easy to hit. */
+.actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 8px;
+  margin-top: 4px;
 }
 
-.message {
-  padding: 10px;
-  border: 1px solid currentColor;
+#export-button {
+  width: 100%;
 }
 
-.message.error {
-  color: #c62828;
-}
+@media (min-width: 768px) {
+  .actions {
+    display: flex;
+  }
 
-ul {
-  padding-left: 20px;
-}
-
-li {
-  margin-bottom: 8px;
-}
-
-li small,
-li.empty {
-  opacity: 0.7;
-}
-
-/* ---- Open-a-trade form ---- */
-fieldset {
-  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
-  margin: 0 0 12px;
-  padding: 8px 12px;
-}
-
-/* Radio buttons and tick-boxes sit beside their text, with a big tap area. */
-label.choice,
-label.check {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 0;
-  margin: 0;
-}
-
-label.choice {
-  display: inline-flex;
-  margin-right: 24px;
-}
-
-input[type="radio"],
-input[type="checkbox"] {
-  display: inline-block;
-  width: 24px;
-  height: 24px;
-  margin: 0;
-  flex-shrink: 0;
+  #export-button {
+    width: auto;
+  }
 }
 
 /* ---- Trade lists ---- */
 ul.trades {
   list-style: none;
+  margin: 0;
   padding: 0;
 }
 
 ul.trades li {
-  padding: 10px 0;
-  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+ul.trades li:last-child {
+  border-bottom: none;
+}
+
+#history-list {
+  margin-top: 6px;
+}
+
+ul.trades li.empty {
+  color: var(--muted);
+}
+
+/* A line with something on the left and something on the right, e.g. "Buy · Rules followed" and "+$25.00". */
+.trade-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+}
+
+.trade-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-family: var(--narrow);
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.trade-amount {
+  font-family: var(--narrow);
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-line {
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-meta {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.trade-actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+@media (min-width: 768px) {
+  .trade-actions {
+    display: flex;
+  }
 }
 
 .rules {
-  font-size: 0.8rem;
-  padding: 1px 6px;
-  border: 1px solid currentColor;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: var(--narrow);
+  font-size: 0.85rem;
+  font-weight: 600;
   white-space: nowrap;
 }
 
 .rules.ok {
-  color: #2e7d32;
+  color: var(--win);
+  background: var(--win-soft);
 }
 
 .rules.broken {
-  color: #c62828;
+  color: var(--loss);
+  background: var(--loss-soft);
 }
 
 .win {
-  color: #2e7d32;
+  color: var(--win);
 }
 
 .loss {
-  color: #c62828;
-}
-
-button.small {
-  padding: 6px 12px;
-  font-size: 0.9rem;
-  margin: 8px 8px 0 0;
+  color: var(--loss);
 }
 
 /* ---- Close-a-trade form ---- */
 .close-box {
-  border: 2px solid currentColor;
-  padding: 4px 12px 8px;
-  margin: 12px 0;
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 2px solid var(--gold);
+  border-radius: var(--radius);
 }
 
 .close-box h3 {
-  margin: 8px 0 4px;
+  margin: 0 0 2px;
+  font-size: 1.2rem;
+}
+
+.close-box #close-summary {
+  margin: 0 0 12px;
+  font-size: 0.9rem;
+}
+
+/* ---- Headline ---- */
+.headline {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+@media (min-width: 768px) {
+  .headline {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+}
+
+.headline-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.headline-card h3 {
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--panel-head);
+  border-bottom: 1px solid var(--border);
+  font-size: 1.05rem;
+}
+
+/* Lap Tracker style: a small grey label, then a big number.
+   The 1px gaps between tiles show the border colour behind them, as dividing lines. */
+.tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.tile {
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--panel);
+}
+
+/* The total gets its own row, and a tile left on its own fills its row. */
+.tile.main,
+.tile:last-child:nth-child(even) {
+  grid-column: 1 / -1;
+}
+
+.tile-label {
+  display: block;
+  color: var(--muted);
+  font-family: var(--narrow);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.tile-value {
+  display: block;
+  font-family: var(--narrow);
+  font-size: 1.45rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.tile.main .tile-value {
+  font-size: 2.4rem;
+  line-height: 1.1;
+}
+
+.tile-note {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.headline-card > .note {
+  margin: 0;
+  padding: 8px 12px;
+}
+
+/* Laptop, one account shown: the four values in one row. */
+@media (min-width: 1100px) {
+  .headline:has(.headline-card:only-child) .tiles {
+    grid-template-columns: 1.5fr 1fr 1fr 1fr;
+  }
+
+  .headline:has(.headline-card:only-child) .tile {
+    grid-column: auto;
+  }
+}
+
+/* ---- Stats ---- */
+details > summary {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 8px 0;
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+details[open] > summary {
+  color: var(--text);
+}
+
+.stats {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+@media (min-width: 768px) {
+  .stats {
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  }
+}
+
+.stats-card {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.stats-card h3 {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+
+.stats-card p {
+  margin: 2px 0;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-table th,
+.stats-table td {
+  padding: 7px 6px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+}
+
+.stats-table thead th {
+  vertical-align: bottom;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.stats-table tbody th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* ---- Settings ---- */
+.account-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.account-line p {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 /* ---- Trade detail ---- */
@@ -157,34 +865,62 @@ dialog.detail {
   height: 100%;
   max-height: 100%;
   margin: 0;
-  padding: 16px;
+  padding: 0;
   border: none;
-  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.detail-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: calc(8px + env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+  background: var(--bar);
+  border-bottom: 1px solid var(--border);
 }
 
 .detail-inner {
   max-width: 1400px;
   margin: 0 auto;
+  padding: 12px max(16px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
 }
 
 .detail h2 {
-  margin: 8px 0 4px;
+  margin: 4px 0;
+  font-size: 1.7rem;
 }
 
 /* Name on the left, value on the right. Long names wrap rather than squeeze the values. */
 .detail-fields {
   display: grid;
   grid-template-columns: fit-content(50%) 1fr;
-  gap: 4px 16px;
-  max-width: 480px;
+  max-width: 520px;
+  margin: 12px 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.detail-fields dt,
+.detail-fields dd {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-fields dt:last-of-type,
+.detail-fields dd:last-of-type {
+  border-bottom: none;
 }
 
 .detail-fields dt {
-  opacity: 0.7;
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .detail-fields dd {
   margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Phone: the two screenshots stack. */
@@ -207,116 +943,20 @@ dialog.detail {
 }
 
 .screenshots figcaption {
-  font-weight: bold;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+  font-size: 1.05rem;
+  font-weight: 700;
 }
 
 .shot img {
   display: block;
   width: 100%;
   height: auto;
-  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
 .shot .empty {
-  opacity: 0.7;
   margin: 0;
-}
-
-/* ---- Headline ---- */
-.headline {
-  display: grid;
-  gap: 12px;
-  margin: 12px 0 8px;
-}
-
-.headline-card {
-  border: 2px solid currentColor;
-  padding: 8px 12px;
-}
-
-.headline-card h3 {
-  margin: 0 0 4px;
-}
-
-.headline-card p {
-  margin: 2px 0;
-}
-
-.headline-usd {
-  font-size: 1.8rem;
-  font-weight: bold;
-}
-
-.headline-card .note {
-  font-size: 0.9rem;
-  opacity: 0.7;
-}
-
-/* ---- Stats ---- */
-.stats {
-  display: grid;
-  gap: 12px;
-  margin: 4px 0 8px;
-}
-
-.stats-card {
-  border: 2px solid currentColor;
-  padding: 8px 12px;
-}
-
-.stats-card h3 {
-  margin: 0 0 4px;
-}
-
-.stats-card p {
-  margin: 2px 0;
-}
-
-.stats-card .note {
-  font-size: 0.9rem;
-  opacity: 0.7;
-}
-
-.table-scroll {
-  overflow-x: auto;
-  margin: 8px 0;
-}
-
-.stats-table {
-  border-collapse: collapse;
-  font-size: 0.9rem;
-  width: 100%;
-}
-
-.stats-table th,
-.stats-table td {
-  padding: 4px 6px;
-  text-align: right;
-  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-}
-
-.stats-table thead th {
-  vertical-align: bottom;
-}
-
-.stats-table tbody th {
-  text-align: left;
-  font-weight: normal;
-  opacity: 0.8;
-}
-
-/* ---- Settings ---- */
-summary {
-  cursor: pointer;
-  padding: 8px 0;
-}
-
-label small {
-  display: block;
-  opacity: 0.7;
-}
-
-.status.error {
-  color: #c62828;
+  color: var(--muted);
 }

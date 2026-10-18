@@ -12,3 +12,6 @@ docs/
 # Never commit secrets.
 .env
 *.secret
+
+# Reference screenshots of Lap Tracker for styling; private, not part of the app.
+screenshots trade tracker/

@@ -27,11 +27,24 @@ const headlineBox = el('headline');
 const statsBox = el('stats');
 const settingsForm = el('settings-form');
 
+// The message stays in view at the top while you scroll. Tap it to hide it.
+// A finished message (not an error, and not "Saving…") also hides itself after a few seconds.
+let messageTimer = null;
+
 function showMessage(text, isError = false) {
+  clearTimeout(messageTimer);
   messageBox.textContent = text;
   messageBox.classList.toggle('error', isError);
   messageBox.hidden = !text;
+  if (text && !isError && !text.endsWith('…')) {
+    messageTimer = setTimeout(() => { messageBox.hidden = true; }, 5000);
+  }
 }
+
+messageBox.addEventListener('click', () => {
+  clearTimeout(messageTimer);
+  messageBox.hidden = true;
+});
 
 // ---- Stop with a friendly warning if the keys haven't been pasted in yet ----
 if (SUPABASE_URL.startsWith('PASTE_')) {
@@ -53,6 +66,7 @@ function render(session) {
 
   signedOutSection.hidden = Boolean(userId);
   signedInSection.hidden = !userId;
+  el('tabs').hidden = !userId;
   openTradesList.innerHTML = '';
   historyList.innerHTML = '';
   headlineBox.innerHTML = '';
@@ -338,6 +352,19 @@ function detailsButton(trade) {
   return button;
 }
 
+// A new element with a class, holding the given text and elements.
+function part(tag, className, ...children) {
+  const element = document.createElement(tag);
+  element.className = className;
+  element.append(...children);
+  return element;
+}
+
+// "Buy" or "Sell" with the rules badge beside it, the start of each trade in the lists.
+function tradeTitle(trade) {
+  return part('span', 'trade-title', directionName(trade), rulesBadge(trade));
+}
+
 // The text for an empty list, e.g. "No open trades on Backtest."
 function emptyListItem(text) {
   const view = selectedView();
@@ -370,15 +397,8 @@ function renderOpenTrades() {
     return;
   }
   for (const trade of shown) {
-    const item = document.createElement('li');
-
-    const headline = document.createElement('strong');
-    headline.textContent = `${directionName(trade)} · risk ${usd.format(trade.risk_usd)}`;
-
-    const details = document.createElement('small');
     const parts = [ACCOUNT_NAMES[trade.account], formatWhen(trade.opened_at)];
     if (trade.adx !== null) parts.push(`ADX ${trade.adx}`);
-    details.textContent = parts.join(' · ');
 
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
@@ -386,9 +406,11 @@ function renderOpenTrades() {
     closeButton.textContent = 'Close trade';
     closeButton.addEventListener('click', () => showCloseForm(trade));
 
-    item.append(headline, ' ', rulesBadge(trade), document.createElement('br'), details,
-      document.createElement('br'), closeButton, detailsButton(trade));
-    openTradesList.appendChild(item);
+    openTradesList.appendChild(part('li', '',
+      part('div', 'trade-row', tradeTitle(trade), part('span', 'trade-line', `Risk ${usd.format(trade.risk_usd)}`)),
+      part('div', 'trade-meta', parts.join(' · ')),
+      part('div', 'trade-actions', closeButton, detailsButton(trade)),
+    ));
   }
 }
 
@@ -507,28 +529,23 @@ function renderHistory() {
   for (const trade of shown) {
     const { pnlUsd, rate, pnlZar, timesRisk } = closedResult(trade);
 
-    const item = document.createElement('li');
+    const resultClass = pnlUsd > 0 ? 'win' : pnlUsd < 0 ? 'loss' : '';
 
-    const headline = document.createElement('strong');
-    headline.className = pnlUsd > 0 ? 'win' : pnlUsd < 0 ? 'loss' : '';
-    headline.textContent = `${directionName(trade)} · ${signedUsd.format(pnlUsd)} · ${signedZar(pnlZar)}`;
-
-    const result = document.createElement('span');
-    result.textContent = `${formatTimesRisk(timesRisk)} · risk ${usd.format(trade.risk_usd)} · USD/ZAR ${rate}`;
-
-    const details = document.createElement('small');
-    details.textContent = `${ACCOUNT_NAMES[trade.account]} · closed ${formatWhen(trade.closed_at)}`;
-
-    item.append(headline, ' ', rulesBadge(trade), document.createElement('br'), result,
-      document.createElement('br'), details);
+    const item = part('li', '',
+      part('div', 'trade-row', tradeTitle(trade),
+        part('span', `trade-amount ${resultClass}`, signedUsd.format(pnlUsd))),
+      part('div', 'trade-row',
+        part('span', 'trade-line', `${formatTimesRisk(timesRisk)} · risk ${usd.format(trade.risk_usd)}`),
+        part('span', `trade-line ${resultClass}`, signedZar(pnlZar))),
+      part('div', 'trade-meta',
+        `${ACCOUNT_NAMES[trade.account]} · closed ${formatWhen(trade.closed_at)} · USD/ZAR ${rate}`),
+    );
 
     if (trade.mistake_tag || trade.lesson) {
-      const notes = document.createElement('small');
-      notes.textContent = [trade.mistake_tag && `Mistake: ${trade.mistake_tag}`, trade.lesson]
-        .filter(Boolean).join(' · ');
-      item.append(document.createElement('br'), notes);
+      item.append(part('div', 'trade-meta',
+        [trade.mistake_tag && `Mistake: ${trade.mistake_tag}`, trade.lesson].filter(Boolean).join(' · ')));
     }
-    item.append(document.createElement('br'), detailsButton(trade));
+    item.append(part('div', 'trade-actions', detailsButton(trade)));
     historyList.appendChild(item);
   }
 }
@@ -733,32 +750,29 @@ function renderHeadline() {
     const totals = headlineTotals(closedTrades.filter((trade) => trade.account === account),
       startBalance, todayRate);
 
-    const card = document.createElement('div');
-    card.className = 'headline-card';
-    const line = (text, className = '') => {
-      const paragraph = document.createElement('p');
-      paragraph.className = className;
-      paragraph.textContent = text;
-      card.appendChild(paragraph);
-    };
-
-    const title = document.createElement('h3');
-    title.textContent = ACCOUNT_NAMES[account];
-    card.appendChild(title);
+    // A small grey label, a big value, and an optional note under it.
+    const tile = (label, value, note = '', className = '', valueClass = '') => part('div', `tile ${className}`,
+      part('span', 'tile-label', label),
+      part('span', `tile-value ${valueClass}`, value),
+      ...(note ? [part('span', 'tile-note', note)] : []));
 
     const resultClass = totals.totalUsd > 0 ? 'win' : totals.totalUsd < 0 ? 'loss' : '';
-    line(signedUsd.format(totals.totalUsd), `headline-usd ${resultClass}`);
-    line(`${signedZar(totals.zarAtCloseRates)} at each trade's close-date rate`);
-    line(totals.zarAtTodayRate === null
-      ? "Rand at today's rate: set today's rate in Settings."
-      : `${signedZar(totals.zarAtTodayRate)} at today's rate (USD/ZAR ${todayRate})`);
-    line(totals.returnFraction === null
-      ? '% return: set a starting balance in Settings.'
-      : `${signedPercent.format(totals.returnFraction)} return on ${usd.format(startBalance)}`);
     const count = totals.count === 1 ? '1 closed trade' : `${totals.count} closed trades`;
-    line(`From ${count}. Open trades aren't counted.`, 'note');
+    const tiles = part('div', 'tiles',
+      tile('Total P&L', signedUsd.format(totals.totalUsd), `From ${count}`, 'main', resultClass),
+      tile('Rand at close-date rates', signedZar(totals.zarAtCloseRates), "Each trade's own rate"),
+      totals.zarAtTodayRate === null
+        ? tile("Rand at today's rate", '—', "Set today's rate in Settings")
+        : tile("Rand at today's rate", signedZar(totals.zarAtTodayRate), `USD/ZAR ${todayRate}`),
+      totals.returnFraction === null
+        ? tile('% return', '—', 'Set a starting balance in Settings')
+        : tile('% return', signedPercent.format(totals.returnFraction), `On ${usd.format(startBalance)}`),
+    );
 
-    headlineBox.appendChild(card);
+    headlineBox.appendChild(part('div', 'headline-card',
+      part('h3', '', ACCOUNT_NAMES[account]),
+      tiles,
+      part('p', 'note', "Open trades aren't counted.")));
   }
 }
 
@@ -937,7 +951,6 @@ function resetSettingsForm() {
   settingsForm.reset();
   delete settingsForm.dataset.edited;
   showSettingsStatus('');
-  el('settings-box').open = false;
   fillSettingsForm();
 }
 
@@ -1095,3 +1108,20 @@ function hideDetail() {
 el('detail-back-button').addEventListener('click', hideDetail);
 // Runs however the view is closed (Back button, or the Esc key on a laptop).
 detailDialog.addEventListener('close', () => { detailTradeId = null; });
+
+// ---- Tabs: underline the part of the page you're looking at ----
+const tabLinks = document.querySelectorAll('#tabs a');
+
+function markTab(sectionId) {
+  for (const link of tabLinks) link.classList.toggle('active', link.getAttribute('href') === `#${sectionId}`);
+}
+
+// Whichever section crosses a line about a third of the way down the screen counts as "here".
+const tabWatcher = new IntersectionObserver((entries) => {
+  for (const entry of entries) if (entry.isIntersecting) markTab(entry.target.id);
+}, { rootMargin: '-30% 0px -65% 0px' });
+
+for (const link of tabLinks) {
+  tabWatcher.observe(el(link.getAttribute('href').slice(1)));
+  link.addEventListener('click', () => markTab(link.getAttribute('href').slice(1)));
+}
