@@ -5,6 +5,7 @@
 // A switch picks which account to show, with a headline of totals for each one,
 // a stats panel per account (including rules followed vs broken), a CSV download of closed trades,
 // and a settings form holds starting balances, today's rate and the ADX threshold.
+// USD/ZAR rates are looked up automatically: today's rate, and each close date's rate.
 // All data lives in Supabase, so the phone and laptop see the same trades and settings.
 
 // ---- Supabase connection ----
@@ -172,6 +173,34 @@ function formatWhen(isoText) {
   });
 }
 
+// ---- Official USD/ZAR rates ----
+// The European Central Bank's daily reference rate, from the free Frankfurter service
+// (no account or key needed). There's one rate per working day, published around 5pm SA time.
+// Weekends and holidays get the last working day's rate.
+const RATE_SERVICE = 'https://api.frankfurter.dev/v1/';
+
+// Looks up the rate for 'latest' or a 'YYYY-MM-DD' day.
+// Returns { rate, date }, where date is the day the rate is really from, or null if it fails.
+async function fetchUsdZar(day) {
+  try {
+    const response = await fetch(`${RATE_SERVICE}${day}?from=USD&to=ZAR`,
+      { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const rate = data.rates && Number(data.rates.ZAR);
+    // Rates are kept to 4 decimal places, like the rate boxes and the database.
+    return rate > 0 ? { rate: Number(rate.toFixed(4)), date: data.date } : null;
+  } catch {
+    return null;
+  }
+}
+
+// A 'YYYY-MM-DD' day as e.g. "16 Oct 2026".
+function formatDay(day) {
+  return new Date(`${day}T00:00`).toLocaleDateString(undefined,
+    { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 // ---- Date and time boxes that default to now ----
 const openedAtInput = el('opened-at');
 const closedAtInput = el('closed-at');
@@ -191,7 +220,11 @@ for (const input of [openedAtInput, closedAtInput]) {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden || signedInSection.hidden) return;
   if (!openedAtInput.dataset.edited) setToNow(openedAtInput);
-  if (!closeSection.hidden && !closedAtInput.dataset.edited) setToNow(closedAtInput);
+  if (!closeSection.hidden && !closedAtInput.dataset.edited) {
+    setToNow(closedAtInput);
+    // "Now" may be a new day, so look up that day's rate (unless you typed one).
+    fillCloseRate();
+  }
   loadSettings();
   loadLists();
 });
@@ -434,32 +467,80 @@ function showCloseForm(trade) {
   tradeBeingClosed = trade;
   closeForm.reset();
   setToNow(closedAtInput);
+  delete closeRateInput.dataset.edited;
   showCloseSummary(trade);
   closeSection.hidden = false;
   closeSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  fillLastRate(trade.account);
+  fillCloseRate();
 }
 
 function hideCloseForm() {
   tradeBeingClosed = null;
   closeSection.hidden = true;
+  el('usdzar-rate-note').textContent = '';
 }
 
 el('cancel-close-button').addEventListener('click', hideCloseForm);
 
-// The rate box starts with the rate from this account's latest closed trade (by close date),
-// so a backtest trade gets a rate from around its own historic date.
-async function fillLastRate(account) {
-  const rateInput = el('usdzar-rate');
+// The rate box starts with the official rate for the close date, so a backtest trade
+// gets the rate from its own historic date. Changing the close date looks it up again.
+// Once you type in the rate box yourself, it's left alone.
+const closeRateInput = el('usdzar-rate');
+const closeRateNote = el('usdzar-rate-note');
+// Counts lookups, so a slow answer for an earlier close date is ignored.
+let closeRateLookup = 0;
+let closeRateTimer = null;
+
+closeRateInput.addEventListener('input', () => {
+  closeRateInput.dataset.edited = 'yes';
+  closeRateNote.textContent = '';
+});
+
+// Waits until you stop changing the date (typing a year sends several changes) before looking up.
+closedAtInput.addEventListener('input', () => {
+  clearTimeout(closeRateTimer);
+  closeRateTimer = setTimeout(fillCloseRate, 600);
+});
+
+async function fillCloseRate() {
+  clearTimeout(closeRateTimer);
+  const trade = tradeBeingClosed;
+  // The datetime box holds local time, so its first 10 characters are the local day.
+  const day = closedAtInput.value.slice(0, 10);
+  if (!trade || closeRateInput.dataset.edited || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+  const lookup = ++closeRateLookup;
+  closeRateNote.textContent = 'Looking up the official rate…';
+
+  const official = await fetchUsdZar(day);
+  // Stop if you typed a rate, changed the date, or closed the form while this was loading.
+  const stillWanted = () => lookup === closeRateLookup && tradeBeingClosed === trade &&
+    !closeRateInput.dataset.edited;
+  if (!stillWanted()) return;
+  if (official) {
+    closeRateInput.value = official.rate;
+    closeRateNote.textContent = official.date === day
+      ? `Official rate for ${formatDay(day)}.`
+      : `Official rate for ${formatDay(official.date)}, the latest one available for ${formatDay(day)}.`;
+    return;
+  }
+
+  // The lookup failed (e.g. no internet), so use the rate from this account's latest closed trade.
   const { data, error } = await db
     .from('trades')
     .select('usdzar_rate')
-    .eq('account', account)
+    .eq('account', trade.account)
     .not('closed_at', 'is', null)
     .order('closed_at', { ascending: false })
     .limit(1);
-  // If you already typed a rate while this was loading, keep yours.
-  if (!error && data.length > 0 && rateInput.value === '') rateInput.value = data[0].usdzar_rate;
+  if (!stillWanted()) return;
+  if (!error && data.length > 0) {
+    closeRateInput.value = Number(data[0].usdzar_rate);
+    closeRateNote.textContent = "Couldn't look up the official rate, so this is the rate from your " +
+      'last closed trade on this account. Check it before saving.';
+  } else {
+    closeRateInput.value = '';
+    closeRateNote.textContent = "Couldn't look up the official rate. Please type it in.";
+  }
 }
 
 closeForm.addEventListener('submit', async (event) => {
@@ -938,6 +1019,34 @@ async function loadSettings() {
   fillSettingsForm();
   showAdxThreshold();
   renderHeadline();
+  updateTodayRate();
+}
+
+// Each time settings load (opening the app, coming back to it, or Refresh), today's rate is
+// looked up and saved if it has changed. A rate you typed is replaced here too.
+async function updateTodayRate() {
+  const userId = currentUserId;
+  const note = el('usdzar-today-note');
+  const latest = await fetchUsdZar('latest');
+  if (currentUserId !== userId) return;
+  if (!latest) {
+    note.textContent = "Couldn't look up today's rate just now, so this is the last saved one.";
+    return;
+  }
+  if (Number(settings.usdzar_today) !== latest.rate) {
+    // Only this one column is sent, so the other settings stay as they are.
+    // If there's no settings row yet, this creates it (the ADX threshold gets its default of 20).
+    const { error } = await db.from('settings').upsert({ user_id: userId, usdzar_today: latest.rate });
+    if (currentUserId !== userId) return;
+    if (error) {
+      note.textContent = "Couldn't save today's rate: " + error.message;
+      return;
+    }
+    settings = { ...settings, usdzar_today: latest.rate };
+    fillSettingsForm();
+    renderHeadline();
+  }
+  note.textContent = `Official rate for ${formatDay(latest.date)}, updated automatically.`;
 }
 
 // Shows the threshold in the entry checklist, e.g. "ADX is above the threshold (20)."
@@ -955,6 +1064,7 @@ const settingsFields = {
 function resetSettingsForm() {
   settingsForm.reset();
   delete settingsForm.dataset.edited;
+  el('usdzar-today-note').textContent = '';
   showSettingsStatus('');
   fillSettingsForm();
 }

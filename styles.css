@@ -311,6 +311,15 @@ label small {
   font-weight: normal;
 }
 
+/* Where an automatic USD/ZAR rate came from, shown under its box. Takes no space when empty. */
+.rate-note {
+  margin-top: 5px;
+}
+
+.rate-note:empty {
+  display: none;
+}
+
 input,
 select {
   display: block;
