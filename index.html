@@ -188,7 +188,7 @@
                 <label class="check"><input type="checkbox" id="check-h1-bias"> The 1H Supertrend matches the trade direction.</label>
                 <label class="check"><input type="checkbox" id="check-m15-flip"> The 15m Supertrend has flipped to match.</label>
                 <label class="check"><input type="checkbox" id="check-adx"> <span>ADX is above the threshold (<span id="adx-threshold-text">20</span>).</span></label>
-                <label class="check"><input type="checkbox" id="check-stop"> The stop is placed at the planned distance.</label>
+                <label class="check"><input type="checkbox" id="check-rr"> <span>Risk:reward is at least 1:<span class="min-rr-text">2</span>.</span></label>
               </fieldset>
 
               <label>Chart screenshot (optional)
@@ -231,8 +231,13 @@
                 <input type="number" id="usdzar-today" inputmode="decimal" min="0.0001" step="0.0001">
                 <small id="usdzar-today-note" class="rate-note"></small>
               </label>
+            </div>
+            <div class="pair">
               <label>ADX threshold
                 <input type="number" id="adx-threshold" inputmode="decimal" min="0" max="100" step="0.1" required>
+              </label>
+              <label>Minimum risk:reward (the N in 1:N)
+                <input type="number" id="min-rr" inputmode="decimal" min="0.01" max="100" step="0.01" required>
               </label>
             </div>
             <div class="actions">
@@ -312,7 +317,7 @@
           <label class="check"><input type="checkbox" id="edit-check-h1-bias"> The 1H Supertrend matches the trade direction.</label>
           <label class="check"><input type="checkbox" id="edit-check-m15-flip"> The 15m Supertrend has flipped to match.</label>
           <label class="check"><input type="checkbox" id="edit-check-adx"> ADX is above the threshold.</label>
-          <label class="check"><input type="checkbox" id="edit-check-stop"> The stop is placed at the planned distance.</label>
+          <label class="check"><input type="checkbox" id="edit-check-rr"> <span>Risk:reward is at least 1:<span class="min-rr-text">2</span>.</span></label>
         </fieldset>
 
         <!-- Switched off (disabled) for an open trade, so its boxes aren't checked or saved. -->

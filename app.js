@@ -4,7 +4,7 @@
 // where a trade can also be edited (to fix a typo) or deleted.
 // A switch picks which account to show, with a headline of totals for each one,
 // a stats panel per account (including rules followed vs broken), a CSV download of closed trades,
-// and a settings form holds starting balances, today's rate and the ADX threshold.
+// and a settings form holds starting balances, today's rate, the ADX threshold and the minimum risk:reward.
 // USD/ZAR rates are looked up automatically: today's rate, and each close date's rate.
 // All data lives in Supabase, so the phone and laptop see the same trades and settings.
 
@@ -321,7 +321,7 @@ openForm.addEventListener('submit', async (event) => {
     check_h1_bias: el('check-h1-bias').checked,
     check_m15_flip: el('check-m15-flip').checked,
     check_adx: el('check-adx').checked,
-    check_stop: el('check-stop').checked,
+    check_rr: el('check-rr').checked,
   };
 
   // Turn the button off while saving so a double tap can't log the trade twice.
@@ -347,15 +347,26 @@ openForm.addEventListener('submit', async (event) => {
 
 // ---- Pieces shared by both lists ----
 // The four checklist tick-boxes, with short names for the detail view and the CSV file.
-const CHECKLIST = [
-  ['check_h1_bias', '1H Supertrend matches direction'],
-  ['check_m15_flip', '15m Supertrend flipped to match'],
-  ['check_adx', 'ADX above threshold'],
-  ['check_stop', 'Stop at planned distance'],
-];
+// The fourth uses the minimum risk:reward from Settings, e.g. "Risk:reward at least 1:2".
+function checklist() {
+  return [
+    ['check_h1_bias', '1H Supertrend matches direction'],
+    ['check_m15_flip', '15m Supertrend flipped to match'],
+    ['check_adx', 'ADX above threshold'],
+    ['check_rr', `Risk:reward at least 1:${Number(settings.min_rr)}`],
+  ];
+}
+
+// Rule 4 was "the stop is placed at the planned distance" until Task 11 went live.
+// Trades saved before then keep that tick, so their Details view says what it meant.
+const RULE_4_CHANGED_AT = new Date('2026-10-21T22:45:39+02:00');
+
+function hasOldRule4(trade) {
+  return new Date(trade.created_at) < RULE_4_CHANGED_AT;
+}
 
 function followedRules(trade) {
-  return trade.check_h1_bias && trade.check_m15_flip && trade.check_adx && trade.check_stop;
+  return trade.check_h1_bias && trade.check_m15_flip && trade.check_adx && trade.check_rr;
 }
 
 function rulesBadge(trade) {
@@ -415,7 +426,7 @@ let openTrades = [];
 async function loadOpenTrades() {
   const { data, error } = await db
     .from('trades')
-    .select('id, account, opened_at, direction, risk_usd, adx, check_h1_bias, check_m15_flip, check_adx, check_stop')
+    .select('id, account, opened_at, direction, risk_usd, adx, check_h1_bias, check_m15_flip, check_adx, check_rr')
     .is('closed_at', null)
     .order('opened_at', { ascending: false });
   if (error) return showMessage('Could not load trades: ' + error.message, true);
@@ -594,7 +605,7 @@ let closedTrades = [];
 async function loadHistory() {
   const { data, error } = await db
     .from('trades')
-    .select('id, account, direction, risk_usd, check_h1_bias, check_m15_flip, check_adx, check_stop, ' +
+    .select('id, account, direction, risk_usd, check_h1_bias, check_m15_flip, check_adx, check_rr, ' +
       'closed_at, pnl_usd, usdzar_rate, mistake_tag, lesson')
     .not('closed_at', 'is', null)
     .order('closed_at', { ascending: false });
@@ -680,14 +691,15 @@ function csvWhen(isoText) {
 const yesNo = (value) => (value ? 'Yes' : 'No');
 
 // Each column: its heading, and how to fill it in for one trade.
-const CSV_COLUMNS = [
+// Worked out at download time, so the risk:reward heading uses the saved N.
+const csvColumns = () => [
   ['Account', (trade) => csvText(ACCOUNT_NAMES[trade.account])],
   ['Opened', (trade) => csvWhen(trade.opened_at)],
   ['Closed', (trade) => csvWhen(trade.closed_at)],
   ['Direction', (trade) => csvText(directionName(trade))],
   ['Risk (USD)', (trade) => csvNumber(Number(trade.risk_usd))],
   ['ADX', (trade) => csvNumber(trade.adx === null ? null : Number(trade.adx))],
-  ...CHECKLIST.map(([field, name]) => [name, (trade) => yesNo(trade[field])]),
+  ...checklist().map(([field, name]) => [name, (trade) => yesNo(trade[field])]),
   ['Rules followed', (trade) => yesNo(followedRules(trade))],
   ['P&L (USD)', (trade) => csvNumber(Number(trade.pnl_usd))],
   ['USD/ZAR rate', (trade) => csvNumber(Number(trade.usdzar_rate))],
@@ -702,8 +714,9 @@ const CSV_COLUMNS = [
 
 // The whole file as text: a heading row, then one row per trade.
 function buildCsv(trades) {
-  const rows = [CSV_COLUMNS.map(([heading]) => csvText(heading))];
-  for (const trade of trades) rows.push(CSV_COLUMNS.map(([, value]) => value(trade)));
+  const columns = csvColumns();
+  const rows = [columns.map(([heading]) => csvText(heading))];
+  for (const trade of trades) rows.push(columns.map(([, value]) => value(trade)));
   return rows.map((cells) => cells.join(';')).join('\r\n') + '\r\n';
 }
 
@@ -738,7 +751,7 @@ exportButton.addEventListener('click', async () => {
   let query = db
     .from('trades')
     .select('account, opened_at, direction, risk_usd, adx, check_h1_bias, check_m15_flip, check_adx, ' +
-      'check_stop, closed_at, pnl_usd, usdzar_rate, mistake_tag, lesson')
+      'check_rr, closed_at, pnl_usd, usdzar_rate, mistake_tag, lesson')
     .not('closed_at', 'is', null)
     .order('closed_at', { ascending: true });
   if (view !== 'both') query = query.eq('account', view);
@@ -997,27 +1010,29 @@ function renderStats() {
 // ---- Settings ----
 // Kept in the settings table (one row for you), so both devices share them.
 const DEFAULT_ADX_THRESHOLD = 20;
+const DEFAULT_MIN_RR = 2;
 let settings = emptySettings();
 
-// Before anything is saved: no balances or rate yet, and the spec's default ADX threshold.
+// Before anything is saved: no balances or rate yet, and the spec's defaults for ADX and risk:reward.
 function emptySettings() {
   return {
     start_balance_daily: null,
     start_balance_backtest: null,
     usdzar_today: null,
     adx_threshold: DEFAULT_ADX_THRESHOLD,
+    min_rr: DEFAULT_MIN_RR,
   };
 }
 
 async function loadSettings() {
   const { data, error } = await db
     .from('settings')
-    .select('start_balance_daily, start_balance_backtest, usdzar_today, adx_threshold')
+    .select('start_balance_daily, start_balance_backtest, usdzar_today, adx_threshold, min_rr')
     .maybeSingle();
   if (error) return showMessage('Could not load settings: ' + error.message, true);
   settings = data || emptySettings();
   fillSettingsForm();
-  showAdxThreshold();
+  showChecklistSettings();
   renderHeadline();
   updateTodayRate();
 }
@@ -1035,7 +1050,7 @@ async function updateTodayRate() {
   }
   if (Number(settings.usdzar_today) !== latest.rate) {
     // Only this one column is sent, so the other settings stay as they are.
-    // If there's no settings row yet, this creates it (the ADX threshold gets its default of 20).
+    // If there's no settings row yet, this creates it (ADX threshold and risk:reward get their defaults).
     const { error } = await db.from('settings').upsert({ user_id: userId, usdzar_today: latest.rate });
     if (currentUserId !== userId) return;
     if (error) {
@@ -1049,9 +1064,13 @@ async function updateTodayRate() {
   note.textContent = `Official rate for ${formatDay(latest.date)}, updated automatically.`;
 }
 
-// Shows the threshold in the entry checklist, e.g. "ADX is above the threshold (20)."
-function showAdxThreshold() {
+// Shows the settings in the entry checklist, e.g. "ADX is above the threshold (20)."
+// and "Risk:reward is at least 1:2." (on the open form and the edit form).
+function showChecklistSettings() {
   el('adx-threshold-text').textContent = String(Number(settings.adx_threshold));
+  for (const text of document.querySelectorAll('.min-rr-text')) {
+    text.textContent = String(Number(settings.min_rr));
+  }
 }
 
 const settingsFields = {
@@ -1059,6 +1078,7 @@ const settingsFields = {
   start_balance_backtest: el('start-balance-backtest'),
   usdzar_today: el('usdzar-today'),
   adx_threshold: el('adx-threshold'),
+  min_rr: el('min-rr'),
 };
 
 function resetSettingsForm() {
@@ -1095,6 +1115,7 @@ settingsForm.addEventListener('submit', async (event) => {
     start_balance_backtest: numberOrNull(settingsFields.start_balance_backtest),
     usdzar_today: numberOrNull(settingsFields.usdzar_today),
     adx_threshold: Number(settingsFields.adx_threshold.value),
+    min_rr: Number(settingsFields.min_rr.value),
   };
 
   const button = el('settings-button');
@@ -1107,7 +1128,7 @@ settingsForm.addEventListener('submit', async (event) => {
 
   settings = changes;
   delete settingsForm.dataset.edited;
-  showAdxThreshold();
+  showChecklistSettings();
   renderHeadline();
   showSettingsStatus('Settings saved.');
 });
@@ -1164,7 +1185,13 @@ function renderDetail(trade, links) {
     ['Opened', formatWhen(trade.opened_at)],
     ['Risk', usd.format(trade.risk_usd)],
     ['ADX', trade.adx === null ? '—' : String(trade.adx)],
-    ...CHECKLIST.map(([field, name]) => [name, trade[field] ? '✓ Yes' : '✗ No']),
+    ...checklist().map(([field, name]) => {
+      const tick = trade[field] ? '✓ Yes' : '✗ No';
+      if (field === 'check_rr' && hasOldRule4(trade)) {
+        return ['Stop at planned distance', `${tick} (the old rule 4, before risk:reward replaced it on 21 Oct 2026)`];
+      }
+      return [name, tick];
+    }),
   ];
 
   if (closed) {
@@ -1255,7 +1282,7 @@ const EDIT_CHECKBOXES = {
   check_h1_bias: el('edit-check-h1-bias'),
   check_m15_flip: el('edit-check-m15-flip'),
   check_adx: el('edit-check-adx'),
-  check_stop: el('edit-check-stop'),
+  check_rr: el('edit-check-rr'),
 };
 
 function showEditForm() {
