@@ -4,12 +4,14 @@
 //| history, works out Supertrend and ADX at each entry, and writes  |
 //| everything to the Experts log and two CSV files in               |
 //| MQL5\Files\GoldTradeLogger.                                      |
-//| Task 12: it sends nothing to the app yet. It never places,       |
-//| changes or closes a trade.                                       |
+//| Task 13: it also saves two chart screenshots per trade (at entry |
+//| and at close) to MQL5\Files\GoldTradeLogger\shots_<login>.       |
+//| It sends nothing to the app yet. It never places, changes or     |
+//| closes a trade.                                                  |
 //+------------------------------------------------------------------+
 #property copyright "Gold Trade Logger"
-#property version   "1.00"
-#property description "Reads gold trades from history and writes them, with Supertrend and ADX at entry, to MQL5\\Files\\GoldTradeLogger. It never trades."
+#property version   "1.10"
+#property description "Reads gold trades from history and writes them, with Supertrend and ADX at entry, to MQL5\\Files\\GoldTradeLogger, plus a 15m chart screenshot at each entry and close. It never trades."
 
 #include <GoldTradeLogger\TradeLoggerCalc.mqh>
 
@@ -20,11 +22,21 @@ input int    InpAdxLength    = 14;    // ADX length (DI length and smoothing)
 input double InpAdxThreshold = 20;    // Rule 3: 1H ADX above this
 input int    InpFlipWindow   = 8;     // Rule 2: 15m flipped within this many closed candles
 input double InpMinRR        = 2.0;   // Rule 4: risk:reward at least 1:N
+input bool   InpScreenshots  = true;  // Save chart screenshots at entry and close
+input string InpTemplate     = "";    // Chart template for screenshots (empty = Supertrend and ADX only)
+input int    InpShotWidth    = 1600;  // Screenshot width in pixels (the app's limit is 1920)
+input int    InpShotHeight   = 900;   // Screenshot height in pixels
+input bool   InpRedoShots    = false; // Redo screenshots that already exist
 
 #define CANDLES_WANTED 1000   // candles worked through before each entry, so the readings settle
 #define CANDLES_NEEDED 300    // with fewer than this, the readings aren't trusted
 #define MAX_ATTEMPTS   30     // seconds to wait for MT5 to connect and download old candles
 #define SA_UTC_OFFSET  2      // South Africa is UTC+2 all year
+#define MAX_SHOT_SIZE  1920   // the app shrinks images to at most this many pixels
+#define CHART_WAIT_MS  15000  // how long to wait for the screenshot chart to load
+#define SHOT_STEP_MS   300    // time between screenshot steps, so MT5 can redraw the chart
+#define PRICE_SCALE_PX 76     // width of the price scale on the right of the image
+#define MARK_PREFIX    "GTL " // our own marks on the screenshot chart start with this
 
 // One MT5 position (a trade), built up from its deals.
 struct Trade
@@ -54,10 +66,28 @@ struct Reading
    string            problem;
   };
 
+// One screenshot still to take.
+struct ShotJob
+  {
+   Trade             t;
+   Reading           r;
+   bool              atClose;   // false = the image at entry
+  };
+
 string g_symbol;
 int    g_digits;
 int    g_serverUtcOffset;   // hours ahead of UTC (Exness: 0)
 int    g_attempts = 0;
+
+// Screenshot progress. MT5 only redraws a chart between our timer events, so each image
+// takes two: one to scroll and draw the marks, the next to save the image.
+long    g_shotChart = 0;
+int     g_shotHandles[];
+ShotJob g_shotJobs[];
+int     g_shotNext = 0;
+bool    g_shotReady = false;   // the next image has been drawn and is ready to save
+int     g_shotSaved = 0, g_shotFailed = 0, g_shotLines = 0;
+string  g_shotFolder;
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -81,6 +111,8 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    EventKillTimer();
+   if(g_shotChart != 0)
+      FinishScreenshots();
   }
 
 void OnTick()
@@ -89,11 +121,21 @@ void OnTick()
 
 void OnTimer()
   {
+   if(g_shotChart != 0)
+     {
+      ScreenshotStep();
+      return;
+     }
    g_attempts++;
    if(g_attempts == 1 || g_attempts % 10 == 0)
       Print("Trade Recorder: attempt ", g_attempts, " of ", MAX_ATTEMPTS);
    if(RunCatchUp(g_attempts >= MAX_ATTEMPTS))
-      EventKillTimer();
+     {
+      if(g_shotChart != 0)
+         EventSetMillisecondTimer(SHOT_STEP_MS);   // screenshots next, a step at a time
+      else
+         EventKillTimer();
+     }
   }
 
 //+------------------------------------------------------------------+
@@ -129,6 +171,8 @@ bool RunCatchUp(const bool lastAttempt)
 
    WriteTrades(trades, readings);
    WriteAccount(startBalance, startTime, laterBalanceOps, count);
+   if(InpScreenshots)
+      StartScreenshots(trades, readings);
    return true;
   }
 
@@ -481,8 +525,448 @@ void WriteAccount(const double startBalance, const datetime startTime, const int
   }
 
 //+------------------------------------------------------------------+
+//| Screenshots. Opens one extra gold 15m chart, copies the owner's  |
+//| drawn lines onto it from their other gold charts, then for each  |
+//| trade scrolls it so the entry candle (then the close candle) is  |
+//| the last one showing, marks entry and exit, and saves a PNG.     |
+//| Images that already exist are skipped, so a later run only adds  |
+//| new trades and the close image of trades that were still open.   |
+//| The chart shows lines as they are NOW, so a line drawn after the |
+//| trade shows too.                                                 |
+//+------------------------------------------------------------------+
+#define SHOT_ZOOM    4                   // MT5 chart zoom 0-5: 4 = 16 pixels per candle
+#define ENTRY_COLOR  C'33,150,243'       // blue
+#define WIN_COLOR    C'46,160,67'        // green
+#define LOSS_COLOR   C'229,57,53'        // red
+
+// Lists the missing images and opens the chart. OnTimer then calls ScreenshotStep.
+void StartScreenshots(const Trade &trades[], const Reading &readings[])
+  {
+   g_shotFolder = StringFormat("GoldTradeLogger\\shots_%I64d", AccountInfoInteger(ACCOUNT_LOGIN));
+   ArrayResize(g_shotJobs, 0);
+   for(int i = 0; i < ArraySize(trades); i++)
+     {
+      if(NeedEntryShot(g_shotFolder, trades[i]))
+         AddShotJob(trades[i], readings[i], false);
+      if(NeedCloseShot(g_shotFolder, trades[i]))
+         AddShotJob(trades[i], readings[i], true);
+     }
+   if(ArraySize(g_shotJobs) == 0)
+     {
+      Print("Trade Recorder: every trade already has its screenshots in MQL5\\Files\\", g_shotFolder);
+      return;
+     }
+   FolderCreate(g_shotFolder);
+
+   g_shotChart = OpenShotChart(g_shotHandles);
+   if(g_shotChart == 0)
+      return;
+   g_shotLines = CopyOwnerLines(g_shotChart);
+   g_shotNext = 0;
+   g_shotReady = false;
+   g_shotSaved = 0;
+   g_shotFailed = 0;
+  }
+
+void AddShotJob(const Trade &t, const Reading &r, const bool atClose)
+  {
+   int n = ArraySize(g_shotJobs);
+   ArrayResize(g_shotJobs, n + 1);
+   g_shotJobs[n].t = t;
+   g_shotJobs[n].r = r;
+   g_shotJobs[n].atClose = atClose;
+  }
+
+// One step: either scroll and draw the next image, or save the one drawn last time.
+void ScreenshotStep()
+  {
+   if(g_shotNext >= ArraySize(g_shotJobs))
+     {
+      EventKillTimer();
+      FinishScreenshots();
+      return;
+     }
+   ShotJob job = g_shotJobs[g_shotNext];
+   string file = ShotFile(g_shotFolder, job.t, job.atClose ? "close" : "entry");
+   if(!g_shotReady)
+     {
+      if(DrawShot(g_shotChart, job))
+         g_shotReady = true;
+      else
+        {
+         g_shotFailed++;
+         g_shotNext++;
+        }
+      return;
+     }
+
+   if(ChartScreenShot(g_shotChart, file, ShotWidth(), ShotHeight(), ALIGN_LEFT))
+      g_shotSaved++;
+   else
+     {
+      Print("Trade Recorder: couldn't save ", file, " (error ", GetLastError(), ")");
+      g_shotFailed++;
+     }
+   g_shotReady = false;
+   g_shotNext++;
+  }
+
+void FinishScreenshots()
+  {
+   ChartClose(g_shotChart);
+   g_shotChart = 0;
+   for(int k = 0; k < ArraySize(g_shotHandles); k++)
+      IndicatorRelease(g_shotHandles[k]);
+   ArrayResize(g_shotHandles, 0);
+   Print(StringFormat("Trade Recorder: saved %d screenshots (%d x %d) to MQL5\\Files\\%s, with %d of your drawn lines copied from your %s charts.%s",
+                      g_shotSaved, ShotWidth(), ShotHeight(), g_shotFolder, g_shotLines, g_symbol,
+                      g_shotFailed > 0 ? StringFormat(" %d couldn't be taken, see above.", g_shotFailed) : ""));
+  }
+
+// Rounded down so the candles fill the image exactly (32 px is a multiple of every zoom's
+// candle width). Otherwise a sliver of the candle after the entry would show.
+int ShotWidth()
+  {
+   int candles = MathMin(InpShotWidth, MAX_SHOT_SIZE) - PRICE_SCALE_PX;
+   return PRICE_SCALE_PX + candles - candles % 32;
+  }
+
+int ShotHeight()
+  {
+   return MathMin(InpShotHeight, MAX_SHOT_SIZE);
+  }
+
+bool NeedEntryShot(const string folder, const Trade &t)
+  {
+   return t.inLots > 0 && (InpRedoShots || !FileIsExist(ShotFile(folder, t, "entry")));
+  }
+
+bool NeedCloseShot(const string folder, const Trade &t)
+  {
+   return t.inLots > 0 && !t.isOpen && (InpRedoShots || !FileIsExist(ShotFile(folder, t, "close")));
+  }
+
+string ShotFile(const string folder, const Trade &t, const string kind)
+  {
+   return StringFormat("%s\\%I64u_%s.png", folder, t.position, kind);
+  }
+
+// Opens the 15m chart, with the owner's template if one is set, and makes sure it has
+// Supertrend and ADX. Returns 0 if it can't.
+long OpenShotChart(int &handles[])
+  {
+   long chart = ChartOpen(g_symbol, PERIOD_M15);
+   if(chart == 0)
+     {
+      Print("Trade Recorder: couldn't open a chart for screenshots (error ", GetLastError(), ")");
+      return 0;
+     }
+   if(InpTemplate != "")
+     {
+      if(!ChartApplyTemplate(chart, InpTemplate))
+         Print("Trade Recorder: couldn't use the template ", InpTemplate, " (error ", GetLastError(), "), using the plain chart");
+      ChartSetSymbolPeriod(chart, g_symbol, PERIOD_M15);   // in case the template has another timeframe
+      // Reading a chart property waits for the template to finish loading.
+      string expert = ChartGetString(chart, CHART_EXPERT_NAME);
+      if(expert != "")
+        {
+         Print("Trade Recorder: the template ", InpTemplate, " has an Expert Advisor in it (", expert, "). Save it again from a chart without the recorder.");
+         ChartClose(chart);
+         return 0;
+        }
+     }
+
+   if(InpTemplate == "")
+      ChartSetInteger(chart, CHART_MODE, CHART_CANDLES);
+   ChartSetInteger(chart, CHART_AUTOSCROLL, false);
+   ChartSetInteger(chart, CHART_SHIFT, false);
+   ChartSetInteger(chart, CHART_SHOW_ONE_CLICK, false);
+   ChartSetInteger(chart, CHART_SHOW_TRADE_LEVELS, false);
+   ChartSetInteger(chart, CHART_SHOW_TRADE_HISTORY, false);   // MT5's own arrows for every trade; ours are clearer
+
+   if(!ChartHasIndicator(chart, "supertrend"))
+      AddIndicator(chart, 0, iCustom(g_symbol, PERIOD_M15, "GoldTradeLogger\\Supertrend", InpAtrPeriod, InpFactor), handles);
+   if(!ChartHasIndicator(chart, "adx"))
+      AddIndicator(chart, (int)ChartGetInteger(chart, CHART_WINDOWS_TOTAL), iADXWilder(g_symbol, PERIOD_M15, InpAdxLength), handles);
+
+   if(!WaitForChart(chart))
+     {
+      Print("Trade Recorder: the screenshot chart didn't finish loading in ", CHART_WAIT_MS / 1000, " seconds, so no screenshots this time");
+      ChartClose(chart);
+      for(int k = 0; k < ArraySize(handles); k++)
+         IndicatorRelease(handles[k]);
+      return 0;
+     }
+   return chart;
+  }
+
+bool ChartHasIndicator(const long chart, const string part)
+  {
+   int windows = (int)ChartGetInteger(chart, CHART_WINDOWS_TOTAL);
+   for(int w = 0; w < windows; w++)
+      for(int k = 0; k < ChartIndicatorsTotal(chart, w); k++)
+        {
+         string name = ChartIndicatorName(chart, w, k);
+         StringToLower(name);
+         if(StringFind(name, part) >= 0)
+            return true;
+        }
+   return false;
+  }
+
+void AddIndicator(const long chart, const int window, const int handle, int &handles[])
+  {
+   if(handle == INVALID_HANDLE || !ChartIndicatorAdd(chart, window, handle))
+     {
+      Print("Trade Recorder: couldn't add an indicator to the screenshot chart (error ", GetLastError(), ")");
+      return;
+     }
+   int n = ArraySize(handles);
+   ArrayResize(handles, n + 1);
+   handles[n] = handle;
+  }
+
+// Waits until the chart has its candles and every indicator on it has worked them all out.
+bool WaitForChart(const long chart)
+  {
+   uint started = GetTickCount();
+   while(GetTickCount() - started < CHART_WAIT_MS && !IsStopped())
+     {
+      int bars = Bars(g_symbol, PERIOD_M15);
+      bool ready = bars > 0 && ChartGetInteger(chart, CHART_VISIBLE_BARS) > 0;
+      int windows = (int)ChartGetInteger(chart, CHART_WINDOWS_TOTAL);
+      for(int w = 0; w < windows && ready; w++)
+         for(int k = 0; k < ChartIndicatorsTotal(chart, w) && ready; k++)
+           {
+            int h = ChartIndicatorGet(chart, w, ChartIndicatorName(chart, w, k));
+            if(h != INVALID_HANDLE)
+              {
+               ready = BarsCalculated(h) >= bars;
+               IndicatorRelease(h);
+              }
+           }
+      if(ready)
+         return true;
+      Sleep(200);
+     }
+   return false;
+  }
+
+// Copies every line, Fibonacci and other drawing from the owner's other charts of this
+// symbol (any timeframe) onto the screenshot chart. Skips MT5's own trade arrows.
+int CopyOwnerLines(const long shotChart)
+  {
+   int copied = 0;
+   for(long c = ChartFirst(); c >= 0; c = ChartNext(c))
+     {
+      if(c == shotChart || ChartSymbol(c) != g_symbol)
+         continue;
+      for(int i = ObjectsTotal(c, 0) - 1; i >= 0; i--)
+        {
+         string name = ObjectName(c, i, 0);
+         if(StringFind(name, MARK_PREFIX) == 0 || StringFind(name, "autotrade") == 0 ||
+            ObjectGetInteger(c, name, OBJPROP_HIDDEN) || ObjectFind(shotChart, name) >= 0)
+            continue;
+         if(CopyObject(c, shotChart, name))
+            copied++;
+        }
+     }
+   return copied;
+  }
+
+bool CopyObject(const long from, const long to, const string name)
+  {
+   ENUM_OBJECT type = (ENUM_OBJECT)ObjectGetInteger(from, name, OBJPROP_TYPE);
+   if(!ObjectCreate(to, name, type, 0, (datetime)ObjectGetInteger(from, name, OBJPROP_TIME, 0), ObjectGetDouble(from, name, OBJPROP_PRICE, 0)))
+      return false;
+
+   // The second and third anchor points, where the drawing has them.
+   long l;
+   double d;
+   for(int p = 1; p < 3; p++)
+     {
+      if(ObjectGetInteger(from, name, OBJPROP_TIME, p, l))
+         ObjectSetInteger(to, name, OBJPROP_TIME, p, l);
+      if(ObjectGetDouble(from, name, OBJPROP_PRICE, p, d))
+         ObjectSetDouble(to, name, OBJPROP_PRICE, p, d);
+     }
+
+   // Look and settings. A property a drawing doesn't have is just ignored.
+   ENUM_OBJECT_PROPERTY_INTEGER ints[] = {OBJPROP_COLOR, OBJPROP_STYLE, OBJPROP_WIDTH, OBJPROP_BACK, OBJPROP_FILL,
+                                          OBJPROP_RAY_LEFT, OBJPROP_RAY_RIGHT, OBJPROP_RAY, OBJPROP_ELLIPSE,
+                                          OBJPROP_ARROWCODE, OBJPROP_ANCHOR, OBJPROP_TIMEFRAMES, OBJPROP_FONTSIZE,
+                                          OBJPROP_DIRECTION, OBJPROP_DEGREE, OBJPROP_DRAWLINES,
+                                          OBJPROP_XDISTANCE, OBJPROP_YDISTANCE, OBJPROP_XSIZE, OBJPROP_YSIZE,
+                                          OBJPROP_CORNER, OBJPROP_BGCOLOR, OBJPROP_BORDER_TYPE, OBJPROP_BORDER_COLOR};
+   for(int k = 0; k < ArraySize(ints); k++)
+      if(ObjectGetInteger(from, name, ints[k], 0, l))
+         ObjectSetInteger(to, name, ints[k], l);
+   ENUM_OBJECT_PROPERTY_DOUBLE doubles[] = {OBJPROP_ANGLE, OBJPROP_SCALE, OBJPROP_DEVIATION};
+   for(int k = 0; k < ArraySize(doubles); k++)
+      if(ObjectGetDouble(from, name, doubles[k], 0, d))
+         ObjectSetDouble(to, name, doubles[k], d);
+   ObjectSetString(to, name, OBJPROP_TEXT, ObjectGetString(from, name, OBJPROP_TEXT));
+   ObjectSetString(to, name, OBJPROP_FONT, ObjectGetString(from, name, OBJPROP_FONT));
+
+   // Levels, for Fibonacci and similar drawings.
+   int levels = (int)ObjectGetInteger(from, name, OBJPROP_LEVELS);
+   if(levels > 0)
+     {
+      ObjectSetInteger(to, name, OBJPROP_LEVELS, levels);
+      for(int k = 0; k < levels; k++)
+        {
+         ObjectSetDouble(to, name, OBJPROP_LEVELVALUE, k, ObjectGetDouble(from, name, OBJPROP_LEVELVALUE, k));
+         ObjectSetInteger(to, name, OBJPROP_LEVELCOLOR, k, ObjectGetInteger(from, name, OBJPROP_LEVELCOLOR, k));
+         ObjectSetInteger(to, name, OBJPROP_LEVELSTYLE, k, ObjectGetInteger(from, name, OBJPROP_LEVELSTYLE, k));
+         ObjectSetInteger(to, name, OBJPROP_LEVELWIDTH, k, ObjectGetInteger(from, name, OBJPROP_LEVELWIDTH, k));
+         ObjectSetString(to, name, OBJPROP_LEVELTEXT, k, ObjectGetString(from, name, OBJPROP_LEVELTEXT, k));
+        }
+     }
+   ObjectSetInteger(to, name, OBJPROP_SELECTED, false);
+   ObjectSetInteger(to, name, OBJPROP_SELECTABLE, false);
+   return true;
+  }
+
+// Zooms, draws the marks and caption, and scrolls so the entry (or close) candle is the
+// last one showing. Anything after it is off the right edge. ScreenshotStep saves the
+// image on the next timer event, once MT5 has redrawn the chart.
+bool DrawShot(const long chart, const ShotJob &job)
+  {
+   Trade t = job.t;
+   int openShift = iBarShift(g_symbol, PERIOD_M15, t.openTime);
+   int closeShift = t.isOpen ? 0 : iBarShift(g_symbol, PERIOD_M15, t.closeTime);
+   if(openShift < 0 || closeShift < 0)
+     {
+      Print(StringFormat("Trade Recorder: #%I64u has no 15m candles on the chart, so no screenshot", t.position));
+      return false;
+     }
+
+   // Zoom out if the whole trade, plus some candles before it, wouldn't fit on the close
+   // image. Both images of a trade use the same zoom.
+   int zoom = SHOT_ZOOM;
+   while(zoom > 0 && (openShift - closeShift + 30) * (1 << zoom) > ShotWidth() - 80)
+      zoom--;
+   ChartSetInteger(chart, CHART_SCALE, zoom);
+
+   // The caption, in short lines because MT5 cuts chart text off at 63 characters.
+   double entry = t.inValue / t.inLots;
+   string lines[5];
+   lines[0] = StringFormat("#%I64u  %s %s lots", t.position, t.dir > 0 ? "Buy" : "Sell", DoubleToString(t.inLots, 2));
+   lines[1] = StringFormat("Entry %s at %s SA", DoubleToString(entry, g_digits), Hhmm(ToSA(t.openTime)));
+   lines[2] = "Image at entry";
+   if(job.r.ok)
+     {
+      lines[3] = StringFormat("At entry: 1H Supertrend %s, 15m %s (%d candles since flip)",
+                              UpDown(job.r.h1Dir), UpDown(job.r.m15Dir), job.r.sinceFlip);
+      lines[4] = "At entry: 1H ADX " + DoubleToString(job.r.adxH1, 1);
+     }
+   else
+      lines[3] = "At entry: no readings";
+
+   ObjectsDeleteAll(chart, MARK_PREFIX);
+   Mark(chart, "entry", t.openTime, entry, t.dir > 0 ? 233 : 234, t.dir > 0 ? ANCHOR_TOP : ANCHOR_BOTTOM,
+        (t.dir > 0 ? "Buy " : "Sell ") + DoubleToString(entry, g_digits), ENTRY_COLOR);
+
+   if(job.atClose)
+     {
+      double closePrice = t.outValue / t.outLots;
+      double pnl = t.profit + t.commission + t.swap;
+      string money = (pnl >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(pnl), 2);
+      color result = (pnl >= 0) ? WIN_COLOR : LOSS_COLOR;
+      string name = MARK_PREFIX + "path";
+      ObjectCreate(chart, name, OBJ_TREND, 0, t.openTime, entry, t.closeTime, closePrice);
+      ObjectSetInteger(chart, name, OBJPROP_COLOR, result);
+      ObjectSetInteger(chart, name, OBJPROP_STYLE, STYLE_DASH);
+      ObjectSetInteger(chart, name, OBJPROP_RAY_RIGHT, false);
+      ObjectSetInteger(chart, name, OBJPROP_SELECTABLE, false);
+      Mark(chart, "exit", t.closeTime, closePrice, 251, ANCHOR_TOP,
+           "Exit " + DoubleToString(closePrice, g_digits) + "  " + money, result);
+      lines[2] = StringFormat("Exit %s at %s SA by %s, P&L %s", DoubleToString(closePrice, g_digits),
+                              Hhmm(ToSA(t.closeTime)), Origin(t.closeReason), money);
+     }
+   Caption(chart, lines);
+
+   // The image is saved from the chart's left edge, so put the left edge one image-width
+   // of candles before the candle that should be last.
+   int shift = job.atClose ? closeShift : openShift;
+   int first = shift + (ShotWidth() - PRICE_SCALE_PX) / (1 << zoom) - 1;
+   int widthInBars = (int)ChartGetInteger(chart, CHART_WIDTH_IN_BARS);
+   ChartNavigate(chart, CHART_END, -(first - widthInBars + 1));
+   int actual = (int)ChartGetInteger(chart, CHART_FIRST_VISIBLE_BAR);
+   if(actual != first)
+      ChartNavigate(chart, CHART_CURRENT_POS, actual - first);
+   ChartRedraw(chart);
+   return true;
+  }
+
+// An arrow at a candle, with a label just to its left (the candle is at the right edge).
+void Mark(const long chart, const string id, const datetime when, const double price,
+          const int arrowCode, const ENUM_ARROW_ANCHOR anchor, const string label, const color clr)
+  {
+   string name = MARK_PREFIX + id;
+   ObjectCreate(chart, name, OBJ_ARROW, 0, when, price);
+   ObjectSetInteger(chart, name, OBJPROP_ARROWCODE, arrowCode);
+   ObjectSetInteger(chart, name, OBJPROP_ANCHOR, anchor);
+   ObjectSetInteger(chart, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(chart, name, OBJPROP_WIDTH, 4);
+   ObjectSetInteger(chart, name, OBJPROP_SELECTABLE, false);
+
+   name = MARK_PREFIX + id + " label";
+   ObjectCreate(chart, name, OBJ_TEXT, 0, when - PeriodSeconds(PERIOD_M15), price);
+   ObjectSetString(chart, name, OBJPROP_TEXT, label + "  ");
+   ObjectSetString(chart, name, OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(chart, name, OBJPROP_FONTSIZE, 11);
+   ObjectSetInteger(chart, name, OBJPROP_ANCHOR, ANCHOR_RIGHT);
+   ObjectSetInteger(chart, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(chart, name, OBJPROP_SELECTABLE, false);
+  }
+
+// Lines of text in the top-left corner saying which trade this is, on a plain panel so
+// the candles behind don't make it hard to read.
+void Caption(const long chart, const string &lines[])
+  {
+   string panel = MARK_PREFIX + "caption panel";
+   if(ObjectFind(chart, panel) < 0)
+     {
+      ObjectCreate(chart, panel, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+      ObjectSetInteger(chart, panel, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(chart, panel, OBJPROP_XDISTANCE, 4);
+      ObjectSetInteger(chart, panel, OBJPROP_YDISTANCE, 22);
+      ObjectSetInteger(chart, panel, OBJPROP_XSIZE, 520);
+      ObjectSetInteger(chart, panel, OBJPROP_YSIZE, 8 + 20 * ArraySize(lines));
+      ObjectSetInteger(chart, panel, OBJPROP_BGCOLOR, (color)ChartGetInteger(chart, CHART_COLOR_BACKGROUND));
+      ObjectSetInteger(chart, panel, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+      ObjectSetInteger(chart, panel, OBJPROP_COLOR, (color)ChartGetInteger(chart, CHART_COLOR_FOREGROUND));
+      ObjectSetInteger(chart, panel, OBJPROP_SELECTABLE, false);
+     }
+   for(int i = 0; i < ArraySize(lines); i++)
+     {
+      string name = MARK_PREFIX + "caption " + IntegerToString(i);
+      if(ObjectFind(chart, name) < 0)
+        {
+         ObjectCreate(chart, name, OBJ_LABEL, 0, 0, 0);
+         ObjectSetInteger(chart, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(chart, name, OBJPROP_XDISTANCE, 8);
+         ObjectSetInteger(chart, name, OBJPROP_YDISTANCE, 24 + 20 * i);
+         ObjectSetString(chart, name, OBJPROP_FONT, "Arial");
+         ObjectSetInteger(chart, name, OBJPROP_FONTSIZE, 11);
+         ObjectSetInteger(chart, name, OBJPROP_COLOR, (color)ChartGetInteger(chart, CHART_COLOR_FOREGROUND));
+         ObjectSetInteger(chart, name, OBJPROP_SELECTABLE, false);
+        }
+      ObjectSetString(chart, name, OBJPROP_TEXT, lines[i]);
+     }
+  }
+
+//+------------------------------------------------------------------+
 //| Small helpers                                                    |
 //+------------------------------------------------------------------+
+string Hhmm(const datetime t)
+  {
+   string s = TimeToString(t, TIME_DATE | TIME_MINUTES);
+   StringReplace(s, ".", "-");
+   return s;
+  }
+
 void WriteLine(const int file, const string line)
   {
    if(file != INVALID_HANDLE)
